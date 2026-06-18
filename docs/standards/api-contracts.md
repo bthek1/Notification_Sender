@@ -128,10 +128,12 @@ Update the authenticated user's profile fields.
 
 ## Notifications
 
-An `Event` is a point-in-time record scheduled to occur at `scheduled_time`. Events
-start `pending` and are marked `fired` once their scheduled time passes (see the
-`fire_events` Celery task). Events are usually created ahead of time by the
-`generate_events` background task.
+An `Event` is a point-in-time record scheduled to occur at `scheduled_time`. Its
+`status` follows the lifecycle `pending → scheduled → fired`: created `pending`,
+moved to `scheduled` once a one-off clocked fire task is armed at its exact time
+(dispatched by beat), and `fired` (with `fired_at` stamped) once it runs. See
+[dynamic-scheduling.md](../explanations/dynamic-scheduling.md#the-event-state-machine).
+Events are usually created ahead of time by the `generate_events` background task.
 
 ### `GET /api/notifications/events/`
 
@@ -204,7 +206,7 @@ are defined in code (`apps/tasks/scheduled_tasks.py`) and applied with
 
 ### `GET /api/tasks/schedules/`
 
-List all periodic tasks with their interval/crontab timing.
+List all periodic tasks with their interval/crontab/clocked timing.
 
 **Auth:** Bearer token required
 
@@ -213,10 +215,11 @@ List all periodic tasks with their interval/crontab timing.
 [
   {
     "id": 1,
-    "name": "notifications-fire-events",
-    "task": "apps.notifications.tasks.fire_events",
+    "name": "notifications-reconcile-pending",
+    "task": "apps.notifications.tasks.reconcile_pending_events_task",
     "enabled": true,
-    "schedule": { "type": "interval", "every": 5, "period": "minutes" },
+    "schedule": { "type": "interval", "every": 1, "period": "minutes" },
+    "one_off": false,
     "args": "[]",
     "kwargs": "{}",
     "last_run_at": "2026-06-18T05:20:00Z",
@@ -226,9 +229,16 @@ List all periodic tasks with their interval/crontab timing.
 ]
 ```
 
-`schedule` is `{"type": "crontab", "minute", "hour", "day_of_week",
-"day_of_month", "month_of_year"}` for crontab-scheduled tasks, or `null` if
-neither is set.
+`schedule` is one of:
+- `{"type": "interval", "every", "period"}` for interval tasks,
+- `{"type": "crontab", "minute", "hour", "day_of_week", "day_of_month",
+  "month_of_year"}` for crontab tasks,
+- `{"type": "clocked", "clocked_time"}` for one-off clocked tasks (an ISO
+  datetime the task fires at once), or
+- `null` if none is set.
+
+`one_off` is `true` for tasks that disable themselves after firing once
+(clocked tasks are typically one-off).
 
 ---
 
@@ -282,7 +292,7 @@ List recent task run results, newest first.
 [
   {
     "task_id": "<celery_task_id>",
-    "task_name": "apps.notifications.tasks.fire_events",
+    "task_name": "apps.notifications.tasks.reconcile_pending_events_task",
     "status": "SUCCESS",
     "result": "3",
     "date_created": "2026-06-18T05:20:00Z",

@@ -5,14 +5,21 @@ import { queryKeys } from "@/api/queryKeys";
 import type { GenerateEventsPayload } from "@/types/events";
 
 /**
- * Fetch all events. Refetches on an interval so that events transitioning
- * from `pending` to `fired` (by the backend worker) show up without a reload.
+ * Fetch all events, kept live without a reload. A short refetch interval lets
+ * events transitioning from `pending` → `scheduled` → `fired` (by the backend
+ * worker) appear within a couple of seconds. `staleTime: 0` overrides the
+ * global 5-minute default so refetch-on-focus / -reconnect actually fire. The
+ * interval auto-pauses while the tab is hidden (TanStack's default
+ * `refetchIntervalInBackground: false`), so we don't poll in the background.
  */
 export function useEvents() {
   return useQuery({
     queryKey: queryKeys.events.all,
     queryFn: listEvents,
-    refetchInterval: 10_000,
+    refetchInterval: 2_000,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }
 

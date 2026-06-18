@@ -14,11 +14,10 @@ class Event(models.Model):
     """
 
     class Status(models.TextChoices):
-        # Lifecycle: PENDING (created, not yet armed) → SCHEDULED (a one-shot
-        # fire_event task is armed with an exact eta) → FIRED (sent). A re-time
-        # sends a SCHEDULED event back to PENDING so it can be re-armed; the
-        # sweeper can fire a PENDING or SCHEDULED event directly if its armed
-        # task was lost.
+        # Lifecycle: PENDING (created, not yet armed) → SCHEDULED (a one-off
+        # clocked fire_event PeriodicTask is armed for the exact time) → FIRED
+        # (sent). A re-time moves the clocked schedule in place; the event stays
+        # SCHEDULED. The reconciler arms any PENDING event missing a schedule.
         PENDING = "pending", "Pending"
         SCHEDULED = "scheduled", "Scheduled"
         FIRED = "fired", "Fired"
@@ -50,11 +49,10 @@ class Event(models.Model):
         null=True,
         blank=True,
         editable=False,
-        db_index=True,
         help_text=(
-            "Celery id of the one-shot fire_event task armed for this event's "
-            "scheduled_time. Non-null means the event is already armed; cleared "
-            "when the event is re-timed so the scheduler can re-arm it."
+            "Name of the one-off clocked fire_event PeriodicTask armed while this "
+            "event is SCHEDULED (deterministically 'fire-event-<id>'). Stored for "
+            "inspectability/rollback; the row is keyed by name, not this column."
         ),
     )
     created_at = models.DateTimeField(auto_now_add=True)
@@ -73,6 +71,6 @@ class Event(models.Model):
     def from_db(cls, db, field_names, values):
         instance = super().from_db(db, field_names, values)
         # Remember the persisted scheduled_time so a post_save signal can detect
-        # a re-time (and revoke/re-arm the dispatch) without an extra query.
+        # a re-time (and move the clocked schedule) without an extra query.
         instance._loaded_scheduled_time = instance.scheduled_time
         return instance

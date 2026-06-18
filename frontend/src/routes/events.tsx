@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,12 @@ import {
 import { EventsChart } from "@/components/events/EventsChart";
 import { DelayChart } from "@/components/events/DelayChart";
 import { EventsTable } from "@/components/events/EventsTable";
+import {
+  EventsRangePicker,
+  makeDefaultRange,
+  type TimeRange,
+} from "@/components/events/EventsRangePicker";
+import { formatDateTime } from "@/lib/date";
 import { useEvents, useGenerateEvents } from "@/hooks/useEvents";
 
 export const Route = createFileRoute("/events")({
@@ -18,8 +25,25 @@ export const Route = createFileRoute("/events")({
 });
 
 function EventsPage() {
-  const { data: events = [], isPending, isError, error } = useEvents();
+  const { data: allEvents = [], isPending, isError, error } = useEvents();
   const generate = useGenerateEvents();
+  const [range, setRange] = useState<TimeRange>(() => makeDefaultRange());
+
+  // Restrict to the picked [from, to] range; the charts and table all render
+  // from this filtered set. Bounds are normalised so an inverted range (end
+  // before start) still yields a valid axis rather than breaking the charts.
+  const { events, windowStartMs, windowEndMs } = useMemo(() => {
+    const startMs = Math.min(range.startMs, range.endMs);
+    const endMs = Math.max(range.startMs, range.endMs);
+    return {
+      windowStartMs: startMs,
+      windowEndMs: endMs,
+      events: allEvents.filter((e) => {
+        const t = new Date(e.scheduled_time).getTime();
+        return t >= startMs && t <= endMs;
+      }),
+    };
+  }, [allEvents, range]);
 
   const pendingCount = events.filter((e) => e.status === "pending").length;
   const firedCount = events.length - pendingCount;
@@ -34,12 +58,26 @@ function EventsPage() {
           </p>
         </div>
         <Button
-          onClick={() => generate.mutate({ count: 5, within_minutes: 20 })}
+          onClick={() => generate.mutate({ count: 10, within_minutes: 5 })}
           disabled={generate.isPending}
         >
-          {generate.isPending ? "Generating…" : "Generate 5 events / 20 min"}
+          {generate.isPending ? "Generating…" : "Generate 10 events / 5 min"}
         </Button>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Time range</CardTitle>
+          <CardDescription>
+            Showing events from {formatDateTime(new Date(windowStartMs))} to{" "}
+            {formatDateTime(new Date(windowEndMs))}. Charts and table follow
+            this range.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <EventsRangePicker value={range} onChange={setRange} />
+        </CardContent>
+      </Card>
 
       {generate.isError && (
         <p className="text-sm text-destructive">
@@ -68,7 +106,11 @@ function EventsPage() {
               Loading events…
             </p>
           ) : (
-            <EventsChart events={events} />
+            <EventsChart
+              events={events}
+              windowStartMs={windowStartMs}
+              windowEndMs={windowEndMs}
+            />
           )}
         </CardContent>
       </Card>
@@ -92,7 +134,11 @@ function EventsPage() {
               Loading events…
             </p>
           ) : (
-            <DelayChart events={events} />
+            <DelayChart
+              events={events}
+              windowStartMs={windowStartMs}
+              windowEndMs={windowEndMs}
+            />
           )}
         </CardContent>
       </Card>

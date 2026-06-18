@@ -40,7 +40,16 @@ export interface CrontabSchedule {
   month_of_year: string;
 }
 
-export type PeriodicTaskSchedule = IntervalSchedule | CrontabSchedule;
+export interface ClockedSchedule {
+  type: "clocked";
+  /** ISO datetime the one-off task fires at. */
+  clocked_time: string;
+}
+
+export type PeriodicTaskSchedule =
+  | IntervalSchedule
+  | CrontabSchedule
+  | ClockedSchedule;
 
 export interface PeriodicTask {
   id: number;
@@ -48,6 +57,8 @@ export interface PeriodicTask {
   task: string;
   enabled: boolean;
   schedule: PeriodicTaskSchedule | null;
+  /** True for one-off (e.g. clocked) tasks that disable after firing once. */
+  one_off: boolean;
   args: string;
   kwargs: string;
   last_run_at: string | null;

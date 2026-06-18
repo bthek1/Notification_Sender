@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 
 class PeriodicTaskSerializer(serializers.ModelSerializer):
-    """Read view of a periodic task plus its interval/crontab timing."""
+    """Read view of a periodic task plus its interval/crontab/clocked timing."""
 
     schedule = serializers.SerializerMethodField()
 
@@ -16,6 +16,7 @@ class PeriodicTaskSerializer(serializers.ModelSerializer):
             "task",
             "enabled",
             "schedule",
+            "one_off",
             "args",
             "kwargs",
             "last_run_at",
@@ -40,6 +41,11 @@ class PeriodicTaskSerializer(serializers.ModelSerializer):
                 "day_of_week": c.day_of_week,
                 "day_of_month": c.day_of_month,
                 "month_of_year": c.month_of_year,
+            }
+        if obj.clocked is not None:
+            return {
+                "type": "clocked",
+                "clocked_time": obj.clocked.clocked_time.isoformat(),
             }
         return None
 

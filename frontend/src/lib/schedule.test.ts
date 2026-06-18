@@ -31,4 +31,13 @@ describe("describeSchedule", () => {
       }),
     ).toBe("0 9 * * 1");
   });
+
+  it("formats a clocked schedule as an 'at <datetime>' string", () => {
+    expect(
+      describeSchedule({
+        type: "clocked",
+        clocked_time: "2026-06-18T06:00:00Z",
+      }),
+    ).toMatch(/^at /);
+  });
 });

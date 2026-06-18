@@ -32,16 +32,22 @@ import type { NotificationEvent } from "@/types/events";
 const { Route } = await import("@/routes/events");
 const EventsPage = Route?.options?.component as React.ComponentType | undefined;
 
+// Default to a scheduled time a few minutes in the future so fixtures fall
+// inside the page's recent-past-to-future window unless a test overrides it.
+function minutesFromNow(minutes: number): string {
+  return new Date(Date.now() + minutes * 60_000).toISOString();
+}
+
 function makeEvent(overrides: Partial<NotificationEvent> = {}): NotificationEvent {
   return {
     id: "1",
     title: "Generated event 1",
     message: "msg",
-    scheduled_time: "2026-06-18T05:24:00Z",
+    scheduled_time: minutesFromNow(5),
     status: "pending",
     fired_at: null,
-    created_at: "2026-06-18T05:20:00Z",
-    updated_at: "2026-06-18T05:20:00Z",
+    created_at: minutesFromNow(-5),
+    updated_at: minutesFromNow(-5),
     ...overrides,
   };
 }
@@ -97,10 +103,59 @@ describe("EventsPage", () => {
 
     await waitFor(() =>
       expect(eventsApi.generateEvents).toHaveBeenCalledWith({
-        count: 5,
-        within_minutes: 20,
+        count: 10,
+        within_minutes: 5,
       }),
     );
+  });
+
+  it("hides events outside the default ±10 minute window", async () => {
+    if (!EventsPage) throw new Error("EventsPage component not found");
+    vi.mocked(eventsApi.listEvents).mockResolvedValue([
+      makeEvent({ id: "1", title: "Recent event" }),
+      makeEvent({
+        id: "2",
+        title: "Stale event",
+        status: "fired",
+        scheduled_time: minutesFromNow(-60),
+        fired_at: minutesFromNow(-60),
+      }),
+      makeEvent({
+        id: "3",
+        title: "Far future event",
+        scheduled_time: minutesFromNow(30),
+      }),
+    ]);
+
+    render(<EventsPage />, { wrapper });
+
+    expect(await screen.findByText("Recent event")).toBeInTheDocument();
+    expect(screen.queryByText("Stale event")).not.toBeInTheDocument();
+    expect(screen.queryByText("Far future event")).not.toBeInTheDocument();
+    // Summary counts reflect only the in-window events.
+    expect(screen.getByText(/1 total · 1 pending · 0 fired/i)).toBeInTheDocument();
+  });
+
+  it("widening the range reveals events further ahead", async () => {
+    if (!EventsPage) throw new Error("EventsPage component not found");
+    vi.mocked(eventsApi.listEvents).mockResolvedValue([
+      makeEvent({ id: "1", title: "Recent event" }),
+      makeEvent({
+        id: "3",
+        title: "Far future event",
+        scheduled_time: minutesFromNow(30),
+      }),
+    ]);
+
+    render(<EventsPage />, { wrapper });
+
+    expect(await screen.findByText("Recent event")).toBeInTheDocument();
+    expect(screen.queryByText("Far future event")).not.toBeInTheDocument();
+
+    // Re-centre the range to ±1h; the +30m event now falls inside it.
+    await userEvent.click(screen.getByRole("button", { name: "±1h" }));
+
+    expect(await screen.findByText("Far future event")).toBeInTheDocument();
   });
 
   it("shows an error message when loading fails", async () => {

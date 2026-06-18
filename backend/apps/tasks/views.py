@@ -18,9 +18,9 @@ from .serializers import (
 class PeriodicTaskListView(generics.ListAPIView):
     """GET /api/tasks/schedules/ — list all periodic tasks."""
 
-    queryset = PeriodicTask.objects.select_related("interval", "crontab").order_by(
-        "name"
-    )
+    queryset = PeriodicTask.objects.select_related(
+        "interval", "crontab", "clocked"
+    ).order_by("name")
     serializer_class = PeriodicTaskSerializer
 
 

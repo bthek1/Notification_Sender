@@ -148,18 +148,17 @@ db-up:
         && echo "DB already running." \
         || (echo "Starting DB..." && docker compose up -d db && echo "Waiting for DB to be ready..." && sleep 3)
 
-# Start the Redis + Celery worker + beat containers if not already running
+# Start Redis + Celery worker + beat, reloading task code on every invocation
 celery-up:
     #!/usr/bin/env bash
-    _redis_up=$(docker compose ps --status running redis | grep -c redis || true)
-    _worker_up=$(docker compose ps --status running celery_worker | grep -c celery_worker || true)
-    _beat_up=$(docker compose ps --status running celery_beat | grep -c celery_beat || true)
-    if [[ "$_redis_up" -gt 0 && "$_worker_up" -gt 0 && "$_beat_up" -gt 0 ]]; then
-        echo "Redis + Celery worker + beat already running."
-    else
-        echo "Starting Redis + Celery worker + beat..."
-        docker compose up -d redis celery_worker celery_beat
-    fi
+    set -euo pipefail
+    echo "Starting Redis + Celery worker + beat..."
+    docker compose up -d redis celery_worker celery_beat
+    # The worker/beat are long-running processes that do NOT hot-reload tasks.py.
+    # Restart them so each `just dev` picks up the latest Celery code (the
+    # ./backend bind mount means a restart is enough — no rebuild needed).
+    echo "Restarting Celery worker + beat to load latest task code..."
+    docker compose restart celery_worker celery_beat
 
 # Run the Celery worker locally (outside Docker) — useful for debugging tasks
 celery-worker:

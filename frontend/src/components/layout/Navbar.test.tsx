@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useUIStore } from "@/store/ui";
@@ -74,6 +74,40 @@ describe("Navbar", () => {
   it("does not show sign-out button when not authenticated", () => {
     render(<Navbar />);
     expect(screen.queryByLabelText("Sign out")).not.toBeInTheDocument();
+  });
+
+  it("renders a live clock in HH:MM:SS.mmm format", () => {
+    render(<Navbar />);
+    expect(
+      screen.getByText(/^\d{2}:\d{2}:\d{2}\.\d{3}$/),
+    ).toBeInTheDocument();
+  });
+
+  it("updates the clock over time", () => {
+    vi.useFakeTimers();
+    // Drive requestAnimationFrame off the fake timer clock.
+    const rafSpy = vi
+      .spyOn(globalThis, "requestAnimationFrame")
+      .mockImplementation((cb) => setTimeout(() => cb(Date.now()), 16) as unknown as number);
+    vi.spyOn(globalThis, "cancelAnimationFrame").mockImplementation(
+      (id) => clearTimeout(id as unknown as ReturnType<typeof setTimeout>),
+    );
+    try {
+      vi.setSystemTime(new Date("2026-06-18T16:08:10.866"));
+      render(<Navbar />);
+      expect(screen.getByText("16:08:10.866")).toBeInTheDocument();
+
+      // Advancing the fake clock fires the rAF tick and moves Date.now() forward.
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      const clock = screen.getByText(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
+      expect(clock.textContent).not.toBe("16:08:10.866");
+      expect(clock.textContent?.startsWith("16:08:11")).toBe(true);
+    } finally {
+      rafSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("shows sign-out button when authenticated", () => {

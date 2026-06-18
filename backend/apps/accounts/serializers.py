@@ -13,6 +13,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         from .services import create_user
+
         return create_user(**validated_data)
 
 

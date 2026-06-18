@@ -3,6 +3,14 @@
 **Status:** Implemented
 **Date:** 2026-06-18
 
+> **Addendum (post-completion):** the `fire_events` / `fire_due_events` **sweeper**
+> described below was later **removed** — there is no fallback poll. The scheduler
+> still recovers overdue `pending` events (it arms them with a past `eta`, so they
+> fire immediately), but a `scheduled` event whose armed task is lost (worker crash
+> between ack and fire, or a broker flush) will not fire. That durability gap is the
+> accepted cost of zero polling. Phase 3 / Risks / Testing items mentioning the
+> sweeper are kept as the historical record only.
+
 ---
 
 ## Goal
@@ -206,7 +214,8 @@ goal is second accuracy, not tighter.
 ## Testing
 
 Implemented in [apps/notifications/tests.py](../../backend/apps/notifications/tests.py)
-(`just be-test`, Celery eager) — **36 passing**, 16 new for this feature:
+(`just be-test`, Celery eager) — **43 in the notifications app**, covering the
+exact-time path and the `pending → scheduled → fired` state machine:
 
 - [x] **`TestScheduleUpcomingEvents`** — arms only in-window/un-armed/pending
   events with the correct `eta` + `args`; never re-arms an already-armed row;
@@ -217,8 +226,13 @@ Implemented in [apps/notifications/tests.py](../../backend/apps/notifications/te
 - [x] **`TestRetimeOnSave`** — changing `scheduled_time` into the window revokes
   the stale arm and re-arms; changing it outside the window revokes but does not
   re-arm; a non-time save is a no-op; `retime_event` ignores fired events.
-- [x] **`TestArmEvent`** — stores the task id and returns `True`; on a lost arm
-  race the guarded UPDATE matches nothing, the loser revokes and returns `False`.
+- [x] **`TestArmEvent`** — claims `PENDING → SCHEDULED` and stores the task id; on
+  a lost claim the guarded UPDATE matches nothing and it returns `False` without
+  enqueuing an orphan task.
+- [x] **`TestRevokeDispatch`** — no-ops on a null id and under eager execution;
+  revokes via `current_app.control` otherwise; swallows broker errors.
+- [x] **`TestStatusLifecycle`** — the full `PENDING → SCHEDULED → FIRED` path and
+  the `SCHEDULED → PENDING` bounce on a re-time.
 - [x] **`TestSweeperCoexistence`** — the sweeper fires an armed-but-unfired due
   event and never re-fires one the exact-time path already fired (status guard).
 - [x] **`TestArmToFireIntegration`** — real eager path (no `apply_async` mock):

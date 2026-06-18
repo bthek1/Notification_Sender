@@ -20,6 +20,7 @@ function makeTask(overrides: Partial<PeriodicTask> = {}): PeriodicTask {
     task: "apps.notifications.tasks.send",
     enabled: true,
     schedule: { type: "interval", every: 5, period: "minutes" },
+    one_off: false,
     args: "[]",
     kwargs: "{}",
     last_run_at: "2026-06-18T05:24:00Z",
@@ -44,6 +45,25 @@ describe("SchedulesTable", () => {
     expect(screen.getByText("send-reminders")).toBeInTheDocument();
     expect(screen.getByText("every 5 minutes")).toBeInTheDocument();
     expect(screen.getByText("enabled")).toBeInTheDocument();
+  });
+
+  it("renders a clocked one-off task with its fire time and badge", () => {
+    render(
+      <SchedulesTable
+        schedules={[
+          makeTask({
+            name: "fire-event-123",
+            schedule: {
+              type: "clocked",
+              clocked_time: "2026-06-18T06:00:00Z",
+            },
+            one_off: true,
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByText(/^at /)).toBeInTheDocument();
+    expect(screen.getByText("one-off")).toBeInTheDocument();
   });
 
   it("triggers a task when Run now is clicked", async () => {

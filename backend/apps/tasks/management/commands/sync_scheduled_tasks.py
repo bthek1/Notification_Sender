@@ -58,9 +58,13 @@ class Command(BaseCommand):
         # we delete exactly the rows not in the current managed set, so unrelated
         # PeriodicTasks created out-of-band are left untouched only if their
         # names are also tracked. To be safe we never touch the celery built-in
-        # "celery.backend_cleanup" row.
-        stale = PeriodicTask.objects.exclude(name__in=managed_names).exclude(
-            name="celery.backend_cleanup"
+        # "celery.backend_cleanup" row, nor the per-event one-off "fire-event-*"
+        # clocked schedules — those are armed dynamically (not in SCHEDULED_TASKS)
+        # and deleting them would silently disable all pending event firing.
+        stale = (
+            PeriodicTask.objects.exclude(name__in=managed_names)
+            .exclude(name="celery.backend_cleanup")
+            .exclude(name__startswith="fire-event-")
         )
         for task in stale:
             self.stdout.write(f"{prefix}delete: {task.name}")

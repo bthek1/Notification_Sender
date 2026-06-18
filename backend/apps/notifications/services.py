@@ -1,40 +1,56 @@
 from __future__ import annotations
 
+import json
 import logging
 import random
 from datetime import timedelta
 
-from celery import current_app
-from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from django_celery_beat.models import ClockedSchedule, PeriodicTask
 
 from .models import Event
 
 logger = logging.getLogger(__name__)
 
-# How far ahead the scheduler arms one-shot fire tasks. Events further out than
-# this stay unarmed until a later scheduler pass's window reaches them, which
-# bounds how many ETA tasks sit in the broker at once.
-SCHEDULE_WINDOW_MINUTES = 10
+# Dotted path of the task beat dispatches to fire one event. Stored on the
+# PeriodicTask row, so it lives as a string here (importing the task would be a
+# needless cycle).
+FIRE_TASK = "apps.notifications.tasks.fire_event"
 
-# Slack allowed when deciding "is this event due yet?". An armed task whose event
-# has been pushed more than this into the future is treated as a re-time: it
-# defers instead of firing. One second keeps us comfortably within the
-# second-accuracy target.
+# Name prefix for the per-event one-off PeriodicTask rows. The name is a pure
+# function of the event id, so the row can always be found without storing a
+# reference. CRITICAL: ``sync_scheduled_tasks`` must exclude this prefix from
+# pruning, or every sync would delete all armed fire schedules.
+FIRE_TASK_NAME_PREFIX = "fire-event-"
+
+# Slack allowed when deciding "is this event due yet?". A clocked row beat
+# dispatched whose event has since been pushed more than this into the future is
+# treated as a stale dispatch: it defers (and re-asserts its arm) instead of
+# firing. One second keeps us within the second-accuracy target.
 RETIME_TOLERANCE = timedelta(seconds=1)
+
+# States from which an event can still be fired or re-armed (i.e. not done).
+_LIVE_STATUSES = (Event.Status.PENDING, Event.Status.SCHEDULED)
+
+
+def fire_task_name(event_id: object) -> str:
+    """Deterministic ``PeriodicTask.name`` for an event's one-off fire schedule."""
+    return f"{FIRE_TASK_NAME_PREFIX}{event_id}"
 
 
 @transaction.atomic
 def generate_future_events(count: int = 5, within_minutes: int = 20) -> list[Event]:
     """Create ``count`` pending events at random times across the next
-    ``within_minutes`` minutes, starting from now.
+    ``within_minutes`` minutes, starting from now, and arm each one.
 
     With the defaults this produces 5 events scattered randomly over the next
     20 minutes. Returns the created events, ordered by scheduled time.
 
-    Arming is intentionally left to the periodic scheduler (and the re-time
-    signal) rather than done here, so this stays a pure data-creation helper.
+    Because ``bulk_create`` bypasses the ``post_save`` signal that arms single
+    creates, we arm the rows here explicitly — with clocked tasks there is no
+    eager-fire race, so arming at creation is safe and means near-term events
+    don't have to wait for the periodic reconciler.
     """
     if count < 1:
         raise ValueError("count must be >= 1")
@@ -57,41 +73,56 @@ def generate_future_events(count: int = 5, within_minutes: int = 20) -> list[Eve
         )
         for i, offset in enumerate(offsets)
     ]
-    return Event.objects.bulk_create(events)
+    created = Event.objects.bulk_create(events)
+    for event in created:
+        _arm_event(event)
+    return created
 
 
-# ── Exact-time scheduling ────────────────────────────────────────────────────
+# ── Exact-time scheduling via clocked beat tasks ─────────────────────────────
 
 
-def _revoke_dispatch(task_id: str | None) -> None:
-    """Best-effort revoke of an armed fire_event task.
+def _write_clocked_task(event: Event) -> None:
+    """Create or update the one-off ``PeriodicTask`` (+ its ``ClockedSchedule``)
+    that beat dispatches to fire ``event`` at ``scheduled_time``.
 
-    Revoke is not guaranteed to reach a worker; the idempotent, re-time-aware
-    ``fire_single_event`` is the real guard against a wrong-time fire. We skip it
-    entirely under eager execution (tests), where there is no live task.
+    Idempotent: keyed on the deterministic name, so retries and re-times both
+    converge on a single row pointing at a schedule for the current time.
     """
-    if not task_id or getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
-        return
-    try:
-        current_app.control.revoke(task_id)
-    except Exception:  # pragma: no cover - broker hiccups must not break a save
-        logger.warning("failed to revoke dispatch task %s", task_id, exc_info=True)
+    schedule, _ = ClockedSchedule.objects.get_or_create(
+        clocked_time=event.scheduled_time
+    )
+    PeriodicTask.objects.update_or_create(
+        name=fire_task_name(event.id),
+        defaults={
+            "task": FIRE_TASK,
+            "clocked": schedule,
+            "interval": None,
+            "crontab": None,
+            "one_off": True,
+            "enabled": True,
+            "args": json.dumps([str(event.id)]),
+        },
+    )
 
 
-# States from which an event can still be fired or re-armed (i.e. not done).
-_LIVE_STATUSES = (Event.Status.PENDING, Event.Status.SCHEDULED)
+def _teardown_clocked_task(event_id: object) -> None:
+    """Delete the per-event fire ``PeriodicTask``. Beat auto-disables a one-off
+    row after it dispatches, but we delete so the beat tables don't grow
+    unbounded. The now-orphaned ``ClockedSchedule`` is swept by the cleanup task.
+    """
+    PeriodicTask.objects.filter(name=fire_task_name(event_id)).delete()
 
 
 def _arm_event(event: Event) -> bool:
-    """Arm a one-shot ``fire_event`` task for ``event`` at its ``scheduled_time``.
+    """Arm a one-off clocked ``fire_event`` task for ``event`` at its
+    ``scheduled_time``.
 
-    Transitions PENDING → SCHEDULED. The claim is done *before* enqueuing so the
-    status guard (``PENDING``) is the dedup lock: a concurrent armer that loses
-    the claim never creates an orphan task. Returns ``True`` if this call armed
-    it.
+    Transitions PENDING → SCHEDULED. The claim is done *before* writing the beat
+    row so the status guard (``PENDING``) is the dedup lock: a concurrent armer
+    that loses the claim never creates an orphan task. Returns ``True`` if this
+    call armed it.
     """
-    from .tasks import fire_event
-
     claimed = Event.objects.filter(pk=event.pk, status=Event.Status.PENDING).update(
         status=Event.Status.SCHEDULED
     )
@@ -99,41 +130,19 @@ def _arm_event(event: Event) -> bool:
         # Already SCHEDULED/FIRED by another pass — nothing to undo.
         return False
 
-    result = fire_event.apply_async(args=[str(event.id)], eta=event.scheduled_time)
-    # Record the task id for revoke-on-retime. Guarded on SCHEDULED so an inline
-    # (eager) fire/defer that already advanced the status doesn't get a stale id.
+    _write_clocked_task(event)
+    # Record the PeriodicTask name for inspectability / rollback. Guarded on
+    # SCHEDULED so a status that advanced underneath us doesn't get a stale ref.
     Event.objects.filter(pk=event.pk, status=Event.Status.SCHEDULED).update(
-        dispatch_task_id=result.id
+        dispatch_task_id=fire_task_name(event.id)
     )
     return True
 
 
-def schedule_upcoming_events(window_minutes: int = SCHEDULE_WINDOW_MINUTES) -> int:
-    """Arm a one-shot fire task for every PENDING event whose ``scheduled_time``
-    falls within the next ``window_minutes`` minutes.
-
-    This is the rolling horizon: run periodically, it arms events (PENDING →
-    SCHEDULED) as they enter the window. Past-due PENDING events are included
-    (their ETA is in the past, so the worker runs them immediately). Already
-    SCHEDULED events are skipped by the status filter. Returns the number armed.
-    """
-    horizon = timezone.now() + timedelta(minutes=window_minutes)
-    upcoming = Event.objects.filter(
-        status=Event.Status.PENDING,
-        scheduled_time__lte=horizon,
-    )
-
-    armed = 0
-    for event in upcoming:
-        if _arm_event(event):
-            armed += 1
-    return armed
-
-
 def fire_single_event(event_id: str) -> str:
     """Fire exactly one event by id. Idempotent and re-time-aware — this is the
-    body of the armed ``fire_event`` task and the backstop that keeps a stale ETA
-    from firing at the wrong time.
+    body of the clocked ``fire_event`` task and the backstop that keeps a stale
+    dispatch from firing at the wrong time.
 
     Returns a short status string: ``fired`` | ``already_fired`` | ``deferred``
     | ``missing`` | ``noop``.
@@ -142,62 +151,89 @@ def fire_single_event(event_id: str) -> str:
     try:
         event = Event.objects.get(pk=event_id)
     except Event.DoesNotExist:
+        _teardown_clocked_task(event_id)
         return "missing"
 
     if event.status == Event.Status.FIRED:
+        _teardown_clocked_task(event_id)
         return "already_fired"
 
-    # Pushed into the future since this task was armed → don't fire. Send it back
-    # to PENDING (dropping the arm) so the scheduler re-arms it once its new time
-    # re-enters the window.
+    # Pushed into the future since beat dispatched this row → don't fire. The
+    # re-time already moved this event's clocked schedule to the new time, so beat
+    # will dispatch again then; re-assert the arm in case this dispatch raced the
+    # re-time (e.g. beat disabled the one-off row before the new time landed).
     if event.scheduled_time > now + RETIME_TOLERANCE:
-        Event.objects.filter(pk=event_id).exclude(status=Event.Status.FIRED).update(
-            status=Event.Status.PENDING, dispatch_task_id=None
-        )
+        _write_clocked_task(event)
         return "deferred"
 
     fired = Event.objects.filter(pk=event_id, status__in=_LIVE_STATUSES).update(
         status=Event.Status.FIRED,
         fired_at=now,
     )
-    return "fired" if fired else "noop"
+    if fired:
+        delta = (now - event.scheduled_time).total_seconds()
+        logger.info(
+            "fired event %s (scheduled %s, %+.3fs)",
+            event_id,
+            event.scheduled_time.isoformat(),
+            delta,
+        )
+        _teardown_clocked_task(event_id)
+        return "fired"
+    return "noop"
 
 
 def retime_event(event: Event) -> None:
-    """Handle an event whose ``scheduled_time`` just changed: revoke the stale
-    arm, return it to PENDING, and re-arm immediately if the new time is already
-    within the window (otherwise the rolling scheduler picks it up later).
+    """Handle an event whose ``scheduled_time`` just changed: move its clocked
+    schedule to the new time. No revoke, no status bounce — beat re-reads the
+    row and the wrong-time fire simply can't be dispatched because the schedule
+    itself moved.
 
     Called from the ``post_save`` signal, so it only runs on genuine ORM saves
-    (admin/shell/API) — not on the scheduler's own ``.update()`` writes.
+    (admin/shell/API) — not on the scheduler's own ``.update()`` writes. If the
+    event was never armed (still PENDING), arm it now.
     """
     if event.status == Event.Status.FIRED:
         return
 
-    if event.dispatch_task_id:
-        _revoke_dispatch(event.dispatch_task_id)
-
-    # Reset to a clean PENDING so _arm_event's PENDING-guarded claim can re-arm.
-    Event.objects.filter(pk=event.pk).exclude(status=Event.Status.FIRED).update(
-        status=Event.Status.PENDING, dispatch_task_id=None
-    )
-    event.status = Event.Status.PENDING
-    event.dispatch_task_id = None
-
-    horizon = timezone.now() + timedelta(minutes=SCHEDULE_WINDOW_MINUTES)
-    if event.scheduled_time <= horizon:
+    if event.status == Event.Status.SCHEDULED:
+        _write_clocked_task(event)
+    else:
         _arm_event(event)
 
 
-def fire_due_events() -> int:
-    """Mark every still-live (PENDING or SCHEDULED) event whose ``scheduled_time``
-    has passed as fired.
+def reconcile_pending_events() -> int:
+    """Arm any ``PENDING`` event lacking a clocked fire schedule.
 
-    This is the low-frequency **sweeper** / durability backstop — it catches
-    events whose armed task was lost (worker downtime, broker flush) or that were
-    never armed. The exact-time path (``fire_single_event``) is the hot path.
-    Returns the number of events fired.
+    Backstop for rows created or edited by paths that bypass the ``post_save``
+    signal (bulk writes, ``QuerySet.update``). ``_arm_event``'s PENDING-guarded
+    claim makes this safe to run concurrently with other armers. Returns the
+    number armed this pass.
     """
-    now = timezone.now()
-    due = Event.objects.filter(status__in=_LIVE_STATUSES, scheduled_time__lte=now)
-    return due.update(status=Event.Status.FIRED, fired_at=now)
+    armed = 0
+    for event in Event.objects.filter(status=Event.Status.PENDING):
+        if _arm_event(event):
+            armed += 1
+    return armed
+
+
+def cleanup_fired_clocked_tasks() -> int:
+    """Delete per-event fire ``PeriodicTask`` rows whose event is gone or already
+    FIRED, then sweep ``ClockedSchedule`` rows no task references.
+
+    Backstop against unbounded growth: ``fire_single_event`` deletes a row on a
+    successful fire, but this catches rows beat dispatched and disabled without a
+    teardown (e.g. a fire that lost the status race). Returns the rows removed.
+    """
+    removed = 0
+    for pt in PeriodicTask.objects.filter(name__startswith=FIRE_TASK_NAME_PREFIX):
+        event_id = pt.name[len(FIRE_TASK_NAME_PREFIX) :]
+        status = (
+            Event.objects.filter(pk=event_id).values_list("status", flat=True).first()
+        )
+        if status is None or status == Event.Status.FIRED:
+            pt.delete()
+            removed += 1
+
+    ClockedSchedule.objects.filter(periodictask__isnull=True).delete()
+    return removed

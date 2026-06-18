@@ -4,15 +4,20 @@ import { listSchedules, toggleSchedule, triggerSchedule } from "@/api/tasks";
 import { queryKeys } from "@/api/queryKeys";
 
 /**
- * Fetch all Celery periodic (scheduled) tasks. Refetches on an interval so
- * that `last_run_at` / `total_run_count` stay roughly fresh as beat fires
- * tasks, without requiring a manual reload.
+ * Fetch all Celery periodic (scheduled) tasks, kept live without a reload. A
+ * short refetch interval keeps `last_run_at` / `total_run_count` fresh as beat
+ * fires tasks. `staleTime: 0` overrides the global 5-minute default so
+ * refetch-on-focus / -reconnect actually fire. The interval auto-pauses while
+ * the tab is hidden (TanStack's default `refetchIntervalInBackground: false`).
  */
 export function useSchedules() {
   return useQuery({
     queryKey: queryKeys.tasks.schedules,
     queryFn: listSchedules,
-    refetchInterval: 10_000,
+    refetchInterval: 3_000,
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }
 

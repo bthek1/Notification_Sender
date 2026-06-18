@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { LogOut, Menu, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,34 @@ import {
 import { useUIStore } from "@/store/ui";
 import { useMe, useLogout } from "@/hooks/useAuth";
 import { SidebarNav } from "./Sidebar";
+
+function formatTime(d: Date) {
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(
+    d.getMilliseconds(),
+    3,
+  )}`;
+}
+
+function Clock() {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    let frame: number;
+    const tick = () => {
+      setNow(new Date());
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  return (
+    <span className="font-mono text-sm tabular-nums text-muted-foreground">
+      {formatTime(now)}
+    </span>
+  );
+}
 
 export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -64,6 +92,8 @@ export function Navbar() {
       <span className="hidden text-sm font-semibold md:block">My App</span>
 
       <div className="flex-1" />
+
+      <Clock />
 
       <ThemeToggle />
 

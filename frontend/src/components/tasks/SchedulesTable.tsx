@@ -37,7 +37,14 @@ function ScheduleRow({ task }: { task: PeriodicTask }) {
         {task.task}
       </td>
       <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
-        {describeSchedule(task.schedule)}
+        <span className="inline-flex items-center gap-1.5">
+          {describeSchedule(task.schedule)}
+          {task.one_off && (
+            <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 font-sans text-[10px] font-medium text-amber-600 dark:text-amber-400">
+              one-off
+            </span>
+          )}
+        </span>
       </td>
       <td className="px-3 py-2">
         <EnabledBadge enabled={task.enabled} />

@@ -89,6 +89,11 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+# Clocked fire tasks dispatch at the next beat tick after their clocked_time, so
+# accuracy is bounded by beat's loop interval. DatabaseScheduler defaults to ~5s;
+# drop it to 1s to keep firing within the second-accuracy target. Cost: beat
+# re-queries the schedule each tick.
+CELERY_BEAT_MAX_LOOP_INTERVAL = 1
 
 # Reliability & observability
 CELERY_TASK_TRACK_STARTED = True  # exposes STARTED state

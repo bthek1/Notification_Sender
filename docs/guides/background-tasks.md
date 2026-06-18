@@ -43,8 +43,9 @@ scheduled_tasks.py   ──►   sync_scheduled_tasks   ──►   PeriodicTask
 | REST API | [backend/apps/tasks/views.py](../../backend/apps/tasks/views.py), [urls.py](../../backend/apps/tasks/urls.py) | List/toggle/trigger schedules, inspect results |
 
 > The `tasks` app has **no models of its own**. It relies on `django-celery-beat`
-> (`PeriodicTask`, `IntervalSchedule`, `CrontabSchedule`) and
-> `django-celery-results` (`TaskResult`).
+> (`PeriodicTask`, `IntervalSchedule`, `CrontabSchedule`, `ClockedSchedule` — the
+> last used for per-event one-off fire schedules) and `django-celery-results`
+> (`TaskResult`).
 
 ## `SCHEDULED_TASKS`: the source of truth
 
@@ -55,11 +56,11 @@ maps to exactly one `PeriodicTask` row. Two schedule shapes are supported.
 
 ```python
 {
-    "name": "notifications-fire-events",            # unique identifier (also the DB row name)
-    "task": "apps.notifications.tasks.fire_events",  # dotted path to the @shared_task
+    "name": "notifications-reconcile-pending",                          # unique identifier (also the DB row name)
+    "task": "apps.notifications.tasks.reconcile_pending_events_task",   # dotted path to the @shared_task
     "schedule_type": "interval",
-    "every": 5,
-    "period": "minutes",                            # seconds | minutes | hours | days
+    "every": 1,
+    "period": "minutes",                                             # seconds | minutes | hours | days
     "enabled": True,
 }
 ```
@@ -94,7 +95,8 @@ next sync will overwrite (or prune) them.
 The command reconciles the database to match the code. For each spec it does an
 `update_or_create` keyed on `name`; afterwards it prunes any `PeriodicTask` row
 whose name is not in `SCHEDULED_TASKS` (the built-in `celery.backend_cleanup` row
-is always preserved).
+and the dynamically-armed per-event `fire-event-*` clocked rows are always
+preserved).
 
 ```bash
 just be-sync-tasks            # apply changes
@@ -110,9 +112,11 @@ What it does, step by step:
 2. **Upsert the task.** `PeriodicTask.objects.update_or_create(name=...)` sets
    `task`, `enabled`, the resolved `interval`/`crontab` (one is set, the other
    `None`), and any JSON-encoded `args`/`kwargs`. Prints `created:` or `updated:`.
-3. **Prune.** Any non-managed `PeriodicTask` is deleted (prints `delete:`). This
-   is what makes the code authoritative — a removed entry in `scheduled_tasks.py`
-   disappears from the DB on the next sync.
+3. **Prune.** Any non-managed `PeriodicTask` is deleted (prints `delete:`), except
+   `celery.backend_cleanup` and the per-event `fire-event-*` clocked rows (armed
+   dynamically, never in `SCHEDULED_TASKS` — pruning them would silently disable
+   all pending event firing). This is what makes the code authoritative — a
+   removed entry in `scheduled_tasks.py` disappears from the DB on the next sync.
 
 `--dry-run` prints `[dry-run] would create/update/delete: <name>` without
 touching the database. The command is idempotent and safe to run on every deploy.
@@ -125,13 +129,20 @@ as Celery `@shared_task` functions.
 
 | Task | Schedule | What it does |
 |---|---|---|
-| `generate_events` | every 20 min, `count=5, within_minutes=20` | Creates 5 pending `Event` rows spread across the next 20 minutes |
-| `fire_events` | every 5 min | Marks every pending `Event` whose `scheduled_time` has passed as `fired` and stamps `fired_at` (so scheduled vs. actual fire time can be compared) |
+| `generate_events` | every 1 min, `count=10, within_minutes=5` | Creates `pending` `Event` rows spread across the next few minutes and arms each one |
+| `reconcile_pending_events_task` | every 1 min | Backstop: arms any `pending` event missing a clocked fire schedule (covers bulk/out-of-band creates that bypass the signal) |
+| `cleanup_fired_clocked_tasks_task` | every 10 min | Deletes `fire-event-*` rows for gone/fired events and sweeps orphaned `ClockedSchedule` rows |
+| `fire_event` | dispatched by beat from a one-off `ClockedSchedule` | Fires one `scheduled` event when its clocked time arrives; idempotent and re-time-aware |
 
-`fire_events` running on a fixed interval is what gives the harness its accuracy:
-an event's `scheduled_time` can be changed at any moment and it still fires within
-one interval (5 min by default — lower it for tighter accuracy) of the new time,
-with no restart.
+Accuracy comes from a **clocked task per event**, not a poll: arming writes a
+one-off `fire-event-<id>` `PeriodicTask` pointing at a `ClockedSchedule` for the
+event's exact `scheduled_time`, and **beat** dispatches it at the first tick after
+that time (accuracy bounded by `CELERY_BEAT_MAX_LOOP_INTERVAL`, set to 1 s).
+Changing an event's `scheduled_time` at any moment moves that clocked schedule in
+place (via a `post_save` signal) — no revoke, no restart. The lifecycle is an
+explicit state machine — `pending → scheduled → fired` — described in
+[dynamic-scheduling.md](../explanations/dynamic-scheduling.md#the-event-state-machine).
+See [docs/plans/completed/clocked-event-firing.md](../plans/completed/clocked-event-firing.md).
 
 ## Inspecting and controlling tasks at runtime
 

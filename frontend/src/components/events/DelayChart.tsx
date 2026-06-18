@@ -8,6 +8,8 @@ const EChartsChart = lazy(() => import("@/components/charts/EChartsChart"));
 
 interface DelayChartProps {
   events: NotificationEvent[];
+  windowStartMs: number;
+  windowEndMs: number;
 }
 
 /** Severity colour for a delay magnitude: green < 1s, amber < 3s, red ≥ 3s. */
@@ -23,7 +25,11 @@ function delayColor(ms: number): string {
  * read-out of scheduling accuracy: taller bars are later fires. Pending events
  * have no delay yet and are omitted.
  */
-function buildOption(events: NotificationEvent[]): EChartsOption {
+function buildOption(
+  events: NotificationEvent[],
+  windowStartMs: number,
+  windowEndMs: number,
+): EChartsOption {
   const points = events
     .filter((e) => e.status === "fired" && e.fired_at)
     .map((e) => {
@@ -63,6 +69,8 @@ function buildOption(events: NotificationEvent[]): EChartsOption {
       name: "Scheduled time",
       nameLocation: "middle",
       nameGap: 30,
+      min: windowStartMs,
+      max: windowEndMs,
       axisLabel: {
         formatter: { hour: "{HH}:{mm}:{ss}", minute: "{HH}:{mm}:{ss}" },
       },
@@ -97,8 +105,15 @@ function buildOption(events: NotificationEvent[]): EChartsOption {
   };
 }
 
-export function DelayChart({ events }: DelayChartProps) {
-  const option = useMemo(() => buildOption(events), [events]);
+export function DelayChart({
+  events,
+  windowStartMs,
+  windowEndMs,
+}: DelayChartProps) {
+  const option = useMemo(
+    () => buildOption(events, windowStartMs, windowEndMs),
+    [events, windowStartMs, windowEndMs],
+  );
 
   const hasFired = events.some((e) => e.status === "fired" && e.fired_at);
   if (!hasFired) {

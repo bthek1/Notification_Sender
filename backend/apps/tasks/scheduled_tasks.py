@@ -10,8 +10,8 @@ Two schedule shapes are supported:
 * ``interval`` — run every N units::
 
     {
-        "name": "notifications-fire-events",
-        "task": "apps.notifications.tasks.fire_events",
+        "name": "notifications-reconcile-pending",
+        "task": "apps.notifications.tasks.reconcile_pending_events_task",
         "schedule_type": "interval",
         "every": 1,
         "period": "minutes",          # seconds | minutes | hours | days
@@ -38,31 +38,32 @@ SCHEDULED_TASKS = [
         "name": "notifications-generate-events",
         "task": "apps.notifications.tasks.generate_events",
         "schedule_type": "interval",
-        "every": 20,
+        "every": 1,
         "period": "minutes",
-        "kwargs": {"count": 5, "within_minutes": 20},
+        "kwargs": {"count": 10, "within_minutes": 5},
         "enabled": True,
     },
     {
-        # Rolling horizon: every minute, arm a one-shot fire_event task (with an
-        # exact eta) for each event entering the next 10-minute window. This is
-        # what makes firing second-accurate — the worker wakes at the eta rather
-        # than a coarse poll catching the event late.
-        "name": "notifications-schedule-upcoming",
-        "task": "apps.notifications.tasks.schedule_upcoming_events_task",
+        # Backstop reconciler: arm any PENDING event that has no clocked fire
+        # schedule. Firing itself is driven by per-event one-off ClockedSchedule
+        # rows that beat dispatches directly — there is no rolling-window armer.
+        # This only catches events created/edited by paths that bypass the
+        # post_save signal (e.g. QuerySet.update); near-term events are armed at
+        # creation, so a 1-minute cadence is ample.
+        "name": "notifications-reconcile-pending",
+        "task": "apps.notifications.tasks.reconcile_pending_events_task",
         "schedule_type": "interval",
         "every": 1,
         "period": "minutes",
-        "kwargs": {"window_minutes": 10},
         "enabled": True,
     },
     {
-        # Sweeper / durability backstop: fire anything already past due whose
-        # armed task was lost (worker downtime, broker flush) or never armed.
-        "name": "notifications-fire-events",
-        "task": "apps.notifications.tasks.fire_events",
+        # Cleanup: delete fire PeriodicTask rows for gone/FIRED events and sweep
+        # orphaned ClockedSchedule rows so the beat tables don't grow unbounded.
+        "name": "notifications-cleanup-fired",
+        "task": "apps.notifications.tasks.cleanup_fired_clocked_tasks_task",
         "schedule_type": "interval",
-        "every": 5,
+        "every": 10,
         "period": "minutes",
         "enabled": True,
     },

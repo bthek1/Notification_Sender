@@ -24,6 +24,7 @@ function makeTask(overrides: Partial<PeriodicTask> = {}): PeriodicTask {
     task: "apps.notifications.tasks.send",
     enabled: true,
     schedule: { type: "interval", every: 5, period: "minutes" },
+    one_off: false,
     args: "[]",
     kwargs: "{}",
     last_run_at: "2026-06-18T05:24:00Z",

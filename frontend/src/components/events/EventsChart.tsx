@@ -8,6 +8,8 @@ const EChartsChart = lazy(() => import("@/components/charts/EChartsChart"));
 
 interface EventsChartProps {
   events: NotificationEvent[];
+  windowStartMs: number;
+  windowEndMs: number;
 }
 
 const STATUS_ROWS = ["fired", "scheduled", "pending"] as const;
@@ -23,7 +25,12 @@ const STATUS_COLORS: Record<(typeof STATUS_ROWS)[number], string> = {
  * into "pending" (not yet armed), "scheduled" (armed, awaiting its eta), and
  * "fired" rows so the lifecycle distribution over time is visible at a glance.
  */
-function buildOption(events: NotificationEvent[], nowMs: number): EChartsOption {
+function buildOption(
+  events: NotificationEvent[],
+  nowMs: number,
+  windowStartMs: number,
+  windowEndMs: number,
+): EChartsOption {
   const toPoint = (e: NotificationEvent) => ({
     value: [e.scheduled_time, e.status] as [string, string],
     name: e.title,
@@ -60,6 +67,8 @@ function buildOption(events: NotificationEvent[], nowMs: number): EChartsOption 
       name: "Scheduled time",
       nameLocation: "middle",
       nameGap: 30,
+      min: windowStartMs,
+      max: windowEndMs,
       axisLabel: {
         formatter: { hour: "{HH}:{mm}:{ss}", minute: "{HH}:{mm}:{ss}" },
       },
@@ -90,10 +99,17 @@ function buildOption(events: NotificationEvent[], nowMs: number): EChartsOption 
   };
 }
 
-export function EventsChart({ events }: EventsChartProps) {
+export function EventsChart({
+  events,
+  windowStartMs,
+  windowEndMs,
+}: EventsChartProps) {
   // Recomputes on each refetch (events identity changes), keeping the "now"
   // line roughly current without a separate ticker.
-  const option = useMemo(() => buildOption(events, Date.now()), [events]);
+  const option = useMemo(
+    () => buildOption(events, Date.now(), windowStartMs, windowEndMs),
+    [events, windowStartMs, windowEndMs],
+  );
 
   return (
     <Suspense

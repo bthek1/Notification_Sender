@@ -4,7 +4,9 @@ from io import StringIO
 import pytest
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
+from django.utils import timezone
 from django_celery_beat.models import (
+    ClockedSchedule,
     CrontabSchedule,
     IntervalSchedule,
     PeriodicTask,
@@ -40,9 +42,25 @@ class TestSyncScheduledTasks:
         call_command("sync_scheduled_tasks")
         task = PeriodicTask.objects.get(name="notifications-generate-events")
         assert task.task == "apps.notifications.tasks.generate_events"
-        assert task.interval.every == 20
+        assert task.interval.every == 1
         assert task.interval.period == IntervalSchedule.MINUTES
-        assert json.loads(task.kwargs) == {"count": 5, "within_minutes": 20}
+        assert json.loads(task.kwargs) == {"count": 10, "within_minutes": 5}
+
+    def test_reconcile_and_cleanup_tasks_synced(self):
+        call_command("sync_scheduled_tasks")
+        reconcile = PeriodicTask.objects.get(name="notifications-reconcile-pending")
+        assert (
+            reconcile.task == "apps.notifications.tasks.reconcile_pending_events_task"
+        )
+        assert reconcile.interval.every == 1
+        assert reconcile.interval.period == IntervalSchedule.MINUTES
+
+        cleanup = PeriodicTask.objects.get(name="notifications-cleanup-fired")
+        assert (
+            cleanup.task == "apps.notifications.tasks.cleanup_fired_clocked_tasks_task"
+        )
+        assert cleanup.interval.every == 10
+        assert cleanup.interval.period == IntervalSchedule.MINUTES
 
     def test_idempotent(self):
         call_command("sync_scheduled_tasks")
@@ -80,12 +98,26 @@ class TestSyncScheduledTasks:
 
     def test_updates_changed_task(self):
         call_command("sync_scheduled_tasks")
-        task = PeriodicTask.objects.get(name="notifications-fire-events")
+        task = PeriodicTask.objects.get(name="notifications-reconcile-pending")
         task.enabled = False
         task.save()
         call_command("sync_scheduled_tasks")
         task.refresh_from_db()
         assert task.enabled is True  # reset to source-of-truth value
+
+    def test_does_not_prune_per_event_fire_tasks(self):
+        # CRITICAL: per-event "fire-event-*" clocked rows are armed dynamically and
+        # are not in SCHEDULED_TASKS. sync must never delete them, or all pending
+        # firing would be silently disabled.
+        clocked = ClockedSchedule.objects.create(clocked_time=timezone.now())
+        PeriodicTask.objects.create(
+            name="fire-event-abc123",
+            task="apps.notifications.tasks.fire_event",
+            clocked=clocked,
+            one_off=True,
+        )
+        call_command("sync_scheduled_tasks")
+        assert PeriodicTask.objects.filter(name="fire-event-abc123").exists()
 
 
 # ── REST API ────────────────────────────────────────────────────────────────────
@@ -102,16 +134,16 @@ class TestScheduleAPI:
         response = auth_client.get("/api/tasks/schedules/")
         assert response.status_code == 200
         names = {row["name"] for row in response.json()}
-        assert "notifications-fire-events" in names
+        assert "notifications-reconcile-pending" in names
         row = next(
             r for r in response.json() if r["name"] == "notifications-generate-events"
         )
         assert row["schedule"]["type"] == "interval"
-        assert row["schedule"]["every"] == 20
+        assert row["schedule"]["every"] == 1
 
     def test_toggle_schedule(self, auth_client):
         call_command("sync_scheduled_tasks")
-        task = PeriodicTask.objects.get(name="notifications-fire-events")
+        task = PeriodicTask.objects.get(name="notifications-reconcile-pending")
         response = auth_client.patch(
             f"/api/tasks/schedules/{task.pk}/",
             {"enabled": False},
@@ -123,7 +155,7 @@ class TestScheduleAPI:
 
     def test_trigger_schedule(self, auth_client, mocker):
         call_command("sync_scheduled_tasks")
-        task = PeriodicTask.objects.get(name="notifications-fire-events")
+        task = PeriodicTask.objects.get(name="notifications-reconcile-pending")
         mock_result = mocker.MagicMock()
         mock_result.id = "fired-123"
         mock_send = mocker.patch(
@@ -134,7 +166,10 @@ class TestScheduleAPI:
         assert response.status_code == 202
         assert response.json()["task_id"] == "fired-123"
         mock_send.assert_called_once()
-        assert mock_send.call_args.args[0] == "apps.notifications.tasks.fire_events"
+        assert (
+            mock_send.call_args.args[0]
+            == "apps.notifications.tasks.reconcile_pending_events_task"
+        )
 
     def test_trigger_passes_kwargs(self, auth_client, mocker):
         call_command("sync_scheduled_tasks")
@@ -144,8 +179,8 @@ class TestScheduleAPI:
 
         auth_client.post(f"/api/tasks/schedules/{task.pk}/trigger/")
         assert mock_send.call_args.kwargs["kwargs"] == {
-            "count": 5,
-            "within_minutes": 20,
+            "count": 10,
+            "within_minutes": 5,
         }
 
     def test_trigger_decodes_json_args(self, auth_client, mocker):
@@ -201,7 +236,7 @@ class TestResultsAPI:
     def test_list_results(self, auth_client):
         TaskResult.objects.create(
             task_id="abc",
-            task_name="apps.notifications.tasks.fire_events",
+            task_name="apps.notifications.tasks.reconcile_pending_events_task",
             status="SUCCESS",
         )
         response = auth_client.get("/api/tasks/results/")
@@ -247,6 +282,20 @@ class TestPeriodicTaskSerializer:
         assert schedule["minute"] == "0"
         assert schedule["hour"] == "1"
         assert schedule["day_of_week"] == "0"
+
+    def test_serializes_clocked_schedule(self):
+        fire_at = timezone.now()
+        clocked = ClockedSchedule.objects.create(clocked_time=fire_at)
+        task = PeriodicTask.objects.create(
+            name="one-shot-fire",
+            task="apps.notifications.tasks.fire_event",
+            clocked=clocked,
+            one_off=True,
+        )
+        data = PeriodicTaskSerializer(task).data
+        assert data["schedule"]["type"] == "clocked"
+        assert data["schedule"]["clocked_time"] == fire_at.isoformat()
+        assert data["one_off"] is True
 
     def test_schedule_is_none_without_interval_or_crontab(self):
         # An unsaved task with neither schedule yields a null schedule rather

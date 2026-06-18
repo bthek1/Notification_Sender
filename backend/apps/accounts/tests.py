@@ -52,6 +52,7 @@ class TestCustomUserModel:
 # Forms
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 class TestCustomUserCreationForm:
     def test_valid_form(self):
@@ -102,6 +103,7 @@ class TestCustomUserChangeForm:
 # Registration API
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 class TestRegisterView:
     def test_register_success(self):
@@ -133,6 +135,7 @@ class TestRegisterView:
 # ---------------------------------------------------------------------------
 # JWT
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.django_db
 class TestJWT:
@@ -173,6 +176,7 @@ class TestJWT:
 # Authenticated endpoint
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.django_db
 class TestUserDetailView:
     def setup_method(self):
@@ -199,4 +203,3 @@ class TestUserDetailView:
     def test_me_unauthenticated(self):
         response = self.client.get("/api/accounts/me/")
         assert response.status_code == 401
-
