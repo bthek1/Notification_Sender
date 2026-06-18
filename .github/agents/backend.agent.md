@@ -37,7 +37,7 @@ backend/
 ├── apps/
 │   ├── accounts/       # CustomUser, JWT auth endpoints
 │   ├── pages/          # Health check, ad-hoc task trigger/status demo
-│   ├── notifications/  # Event model + generate_events / fire_events tasks
+│   ├── notifications/  # Event model + generate_events / sync_event_window / fire_event tasks
 │   └── tasks/          # SCHEDULED_TASKS + sync_scheduled_tasks + schedule/result API (no models)
 ├── conftest.py         # Root pytest fixtures
 ├── manage.py
@@ -77,7 +77,8 @@ backend/
 **Background tasks (Celery):**
 - Tasks are `@shared_task` functions in each app's `tasks.py` (auto-discovered by `core/celery.py`)
 - Periodic schedules use `django-celery-beat`'s `DatabaseScheduler` (DB rows) — never a static `beat_schedule` dict
-- Declare periodic tasks in `apps/tasks/scheduled_tasks.py` (`SCHEDULED_TASKS`); apply with `just be-sync-tasks` (the `sync_scheduled_tasks` command). Never hand-edit managed `PeriodicTask` rows — the next sync overwrites/prunes them
+- Declare periodic tasks in `apps/tasks/scheduled_tasks.py` (`SCHEDULED_TASKS`); apply with `just be-sync-tasks` (the `sync_scheduled_tasks` command). Never hand-edit managed `PeriodicTask` rows — the next sync overwrites/prunes them. Sync preserves `celery.backend_cleanup` and the dynamic `fire-event-*` clocked rows (see below) — never make pruning exhaustive
+- Event firing is **not** periodic: the windower (`sync_event_window`, every 10s) arms a one-off `ClockedSchedule` + `PeriodicTask` (`fire-event-<id>`) per `Event` entering the next 60s and disarms ones re-timed back out, so the armed set stays bounded under a large backlog. Beat dispatches each `fire_event` at its exact time; re-time via `post_save` re-settles the schedule. See `apps/notifications/services.py` and `docs/explanations/dynamic-scheduling.md`
 - Runtime control/inspection: `/api/tasks/schedules/` and `/api/tasks/results/`. Full guide: `docs/guides/background-tasks.md`
 
 **Settings:**

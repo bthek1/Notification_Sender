@@ -6,9 +6,9 @@ Guidance for AI coding agents (Claude Code and others) working in this repositor
 
 **Notification Sender** is a test harness for **accurate background task execution at dynamic, user-changeable times**. The central problem it explores: schedule a notification to fire at time T, let a user change T at any moment, and still have the task fire accurately at the new time — with no process restart.
 
-The mechanism is **Celery + django-celery-beat's `DatabaseScheduler`**: schedules live in PostgreSQL and beat re-reads them continuously, so they are mutable at runtime. The "send" action in this harness is intentionally simple — the `fire_events` task flips an `Event` row's `status` to `fired` and stamps `fired_at` (plus a log line), so accuracy can be read off `scheduled_time` vs. `fired_at`, rather than hitting a real channel. A React SPA surfaces this: an **Events** page (timeline chart + table, generate-on-demand) and a **Scheduled tasks** page (toggle/trigger the periodic schedules).
+The mechanism is **Celery + django-celery-beat's `DatabaseScheduler`**: schedules live in PostgreSQL and beat re-reads them continuously, so they are mutable at runtime. Firing uses **windowed clocked tasks** — a windower (`sync_event_window`, every 10s) arms a one-off `ClockedSchedule` + `PeriodicTask` for each `Event` entering the next 60s (and disarms ones re-timed back out), so the armed set stays bounded even with millions of future events; **beat** dispatches each at its exact time. The "send" action is intentionally simple — the `fire_event` task flips an `Event` row's `status` to `fired` and stamps `fired_at` (plus a log line), so accuracy can be read off `scheduled_time` vs. `fired_at`, rather than hitting a real channel. A React SPA surfaces this: an **Events** page (timeline chart + table, generate-on-demand) and a **Scheduled tasks** page (toggle/trigger the periodic schedules).
 
-- **Design spec:** [docs/plans/dynamic-notification-scheduler.md](docs/plans/dynamic-notification-scheduler.md)
+- **Design spec:** [docs/plans/completed/dynamic-notification-scheduler.md](docs/plans/completed/dynamic-notification-scheduler.md) (firing mechanism since superseded by [windowed-clocked-arming.md](docs/plans/completed/windowed-clocked-arming.md))
 - **Concept explainer:** [docs/explanations/dynamic-scheduling.md](docs/explanations/dynamic-scheduling.md)
 - **Architecture:** [docs/explanations/architecture.md](docs/explanations/architecture.md)
 
@@ -18,7 +18,7 @@ The mechanism is **Celery + django-celery-beat's `DatabaseScheduler`**: schedule
 backend/   Django REST API + Celery (Python 3.13, uv, PostgreSQL, Redis)
   core/    settings/ (base|dev|prod|test), urls.py, celery.py
   apps/    accounts/ (CustomUser, JWT), pages/ (health + ad-hoc task demo)
-           notifications/ (Event model + generate_events / fire_events tasks)
+           notifications/ (Event model + generate_events / sync_event_window / fire_event tasks)
            tasks/ (SCHEDULED_TASKS source of truth + sync_scheduled_tasks + schedule/result API)
 frontend/  React 19 SPA (Vite 8, TS, TanStack Router/Query, Tailwind v4, shadcn/base-ui, Zustand)
 docs/      standards/ guides/ plans/ explanations/  — single source of truth, keep in sync

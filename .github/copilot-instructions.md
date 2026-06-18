@@ -71,7 +71,8 @@ AUTH_USER_MODEL = "accounts.CustomUser"
 **Background tasks (Celery):**
 - Celery app in `core/celery.py`; tasks go in each app's `tasks.py` (auto-discovered).
 - Periodic schedules use `django-celery-beat`'s `DatabaseScheduler` — schedules are DB rows, **never** a static `beat_schedule` dict, so they are mutable at runtime.
-- Declare periodic tasks in code in `apps/tasks/scheduled_tasks.py` (`SCHEDULED_TASKS`, one dict per task, `interval` or `crontab`). Apply them with `just be-sync-tasks` (the `sync_scheduled_tasks` command): it upserts `PeriodicTask` rows keyed on `name` and prunes any not in the list. Never hand-edit managed `PeriodicTask` rows.
+- Declare periodic tasks in code in `apps/tasks/scheduled_tasks.py` (`SCHEDULED_TASKS`, one dict per task, `interval` or `crontab`). Apply them with `just be-sync-tasks` (the `sync_scheduled_tasks` command): it upserts `PeriodicTask` rows keyed on `name` and prunes any not in the list — **except** `celery.backend_cleanup` and the dynamically-armed `fire-event-*` clocked rows (per-event one-off fire schedules the windower arms; pruning them would silently disable all event firing). Never hand-edit managed `PeriodicTask` rows.
+- Event firing is **not** a periodic task: a windower (`sync_event_window`, every 10s) arms a one-off `ClockedSchedule` + `PeriodicTask` (`fire-event-<id>`) per `Event` entering the next 60s and disarms ones re-timed out, keeping the armed set bounded. Beat dispatches each `fire_event` at its exact time. Don't arm at creation or for the whole backlog.
 - Inspect/control schedules at runtime via `/api/tasks/schedules/` and `/api/tasks/results/`. See [docs/guides/background-tasks.md](../docs/guides/background-tasks.md).
 
 ---
@@ -241,7 +242,7 @@ Key commands:
 │   │   │   ├── urls.py
 │   │   │   └── migrations/
 │   │   ├── pages/             # Health check, ad-hoc task trigger/status demo
-│   │   ├── notifications/     # Event model + generate_events / fire_events tasks
+│   │   ├── notifications/     # Event model + generate_events / sync_event_window / fire_event tasks
 │   │   └── tasks/             # SCHEDULED_TASKS + sync_scheduled_tasks + schedule/result API (no models)
 │   ├── conftest.py            # Root pytest fixtures
 │   ├── manage.py
