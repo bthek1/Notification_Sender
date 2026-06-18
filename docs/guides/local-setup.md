@@ -18,7 +18,7 @@ This guide walks through getting the full stack running on your local machine us
 
 ```bash
 git clone <repo-url>
-cd django_react_template
+cd Notification_Sender
 ```
 
 ### 2. Create environment files

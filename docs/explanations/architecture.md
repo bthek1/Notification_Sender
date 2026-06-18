@@ -2,23 +2,35 @@
 
 ## Overview
 
-This project is a **decoupled monorepo**: a Django REST Framework backend and a React SPA frontend, developed and deployed independently, communicating exclusively over HTTP.
+This project is a **decoupled monorepo**: a Django REST Framework backend and a React SPA frontend, developed and deployed independently, communicating exclusively over HTTP. The backend is paired with a **Celery** worker and **beat** scheduler (Redis broker) that run background tasks — the core subject of this repo: firing notifications accurately at dynamic, user-changeable times.
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                        Monorepo root                         │
-│                                                              │
-│  ┌─────────────────────┐    HTTP/JSON    ┌────────────────┐  │
-│  │   frontend/         │ ─────────────► │   backend/     │  │
-│  │   React SPA         │ ◄──────────── │   DRF API      │  │
-│  │   (Vite, TS)        │                │   (Django)     │  │
-│  └─────────────────────┘                └───────┬────────┘  │
-│                                                  │           │
-│                                         ┌────────▼────────┐ │
-│                                         │   PostgreSQL    │ │
-│                                         └─────────────────┘ │
-└──────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                              Monorepo root                             │
+│                                                                        │
+│  ┌─────────────────────┐    HTTP/JSON    ┌────────────────┐            │
+│  │   frontend/         │ ─────────────► │   backend/     │            │
+│  │   React SPA         │ ◄──────────── │   DRF API      │            │
+│  │   (Vite, TS)        │                │   (Django)     │            │
+│  └─────────────────────┘                └───┬─────────┬──┘            │
+│                                             │         │               │
+│                                   ┌─────────▼──┐  ┌───▼──────────┐    │
+│                                   │ PostgreSQL │  │    Redis     │    │
+│                                   │ (data +    │  │   (broker)   │    │
+│                                   │  schedules)│  └───┬──────────┘    │
+│                                   └─────▲──────┘      │               │
+│                                         │      ┌──────▼───────┐       │
+│                            results,     │      │ Celery beat  │       │
+│                            schedule     │      │ (scheduler)  │       │
+│                            reads/writes │      └──────┬───────┘       │
+│                                         │      ┌──────▼───────┐       │
+│                                         └──────┤ Celery worker│       │
+│                                                │ (runs tasks) │       │
+│                                                └──────────────┘       │
+└────────────────────────────────────────────────────────────────────────┘
 ```
+
+`beat` reads schedules from PostgreSQL (via `django-celery-beat`'s `DatabaseScheduler`) and enqueues due tasks onto Redis; the `worker` consumes them and writes results back to PostgreSQL (via `django-celery-results`). Because schedules live in the database and beat re-reads them continuously, **a schedule's time can be changed at runtime** — no process restart required.
 
 The two applications **share no code**. The API contract (documented in `docs/standards/api-contracts.md`) is the only interface between them.
 
@@ -44,8 +56,13 @@ backend/
 │   │   ├── services.py    Business logic (user creation, etc.)
 │   │   ├── views.py       Class-based API views
 │   │   └── urls.py
-│   └── pages/             Infrastructure endpoints
-│       └── views.py       /api/health/ liveness check
+│   ├── pages/             Infrastructure endpoints
+│   │   ├── views.py       /api/health/ liveness + /api/tasks/ trigger/status/revoke
+│   │   └── tasks.py       Demo Celery tasks (add, process_data)
+│   └── notifications/     [planned] Notification + Schedule models, dynamic scheduler API
+│                          (see docs/plans/dynamic-notification-scheduler.md)
+├── core/
+│   └── celery.py          Celery app — autodiscovers tasks.py in each app
 ├── manage.py
 ├── pyproject.toml         Python dependencies (managed by uv)
 └── .env.example
@@ -60,6 +77,8 @@ backend/
 **Split settings.** `base.py` contains all environment-agnostic config. Each environment file imports from `base` and overrides only what it needs. The active settings module is selected via `DJANGO_SETTINGS_MODULE`.
 
 **UUID primary keys.** All models use `UUIDField(default=uuid4)` as the primary key to avoid exposing sequential integer IDs in the API.
+
+**Database-backed scheduling.** Background work runs through Celery. The beat scheduler is configured with `django_celery_beat.schedulers:DatabaseScheduler` (see `CELERY_BEAT_SCHEDULER` in `core/settings/base.py`), so periodic/clocked schedules are stored as rows in PostgreSQL rather than in a static `beat_schedule` dict. This is what makes schedule times **editable at runtime**: writing to a `PeriodicTask` row (directly, via the Django admin, or via the planned scheduler API) changes when a task next fires, with no restart. Task results are persisted via `django-celery-results` (`CELERY_RESULT_BACKEND = "django-db"`) so every run — and its accuracy — is auditable. See [dynamic-scheduling.md](dynamic-scheduling.md).
 
 ---
 

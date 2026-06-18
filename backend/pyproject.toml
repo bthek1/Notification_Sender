@@ -1,7 +1,7 @@
 [project]
-name = "django-react-template"
+name = "notification-sender"
 version = "0.1.0"
-description = "Django REST Framework + React template"
+description = "Notification Sender — a test harness for accurate background task execution at dynamic, user-changeable times (Django REST + React + Celery)"
 authors = [{ name = "Benedict Thekkel", email = "bthekkel1@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.13"
