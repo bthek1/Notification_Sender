@@ -61,9 +61,9 @@ backend/
 │   │   └── tasks.py       Demo Celery tasks (add, process_data)
 │   ├── notifications/     Event model + exact-time scheduling/firing tasks
 │   │   ├── models.py      Event (UUID PK, scheduled_time, status, fired_at, dispatch_task_id)
-│   │   ├── services.py    generate_future_events / _arm_event / retime_event / fire_single_event / reconcile / cleanup
-│   │   ├── tasks.py       generate_events / fire_event / reconcile_pending_events_task / cleanup_fired_clocked_tasks_task
-│   │   ├── signals.py     post_save arm-on-create + move clocked schedule on scheduled_time change
+│   │   ├── services.py    generate_future_events / sync_event_window / _arm_event / _disarm_event / retime_event / fire_single_event / cleanup
+│   │   ├── tasks.py       generate_events / fire_event / sync_event_window_task / cleanup_fired_clocked_tasks_task
+│   │   ├── signals.py     post_save re-settle clocked schedule on scheduled_time change (window-aware)
 │   │   └── views.py       /api/notifications/events/ (list, detail, generate)
 │   └── tasks/             Periodic-schedule management (no models of its own)
 │       ├── scheduled_tasks.py   SCHEDULED_TASKS — source of truth, in git

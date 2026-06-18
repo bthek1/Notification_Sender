@@ -26,9 +26,15 @@ FIRE_TASK_NAME_PREFIX = "fire-event-"
 
 # Slack allowed when deciding "is this event due yet?". A clocked row beat
 # dispatched whose event has since been pushed more than this into the future is
-# treated as a stale dispatch: it defers (and re-asserts its arm) instead of
-# firing. One second keeps us within the second-accuracy target.
+# treated as a stale dispatch: it defers instead of firing. One second keeps us
+# within the second-accuracy target.
 RETIME_TOLERANCE = timedelta(seconds=1)
+
+# Rolling horizon for arming. The windower (``sync_event_window``, every 10s) arms
+# only events due within this many seconds and disarms SCHEDULED events pushed
+# back beyond it, so the number of clocked beat rows tracks "events firing soon",
+# not the entire future backlog — which can be millions of rows.
+WINDOW_SECONDS = 60
 
 # States from which an event can still be fired or re-armed (i.e. not done).
 _LIVE_STATUSES = (Event.Status.PENDING, Event.Status.SCHEDULED)
@@ -42,15 +48,14 @@ def fire_task_name(event_id: object) -> str:
 @transaction.atomic
 def generate_future_events(count: int = 5, within_minutes: int = 20) -> list[Event]:
     """Create ``count`` pending events at random times across the next
-    ``within_minutes`` minutes, starting from now, and arm each one.
+    ``within_minutes`` minutes, starting from now.
 
     With the defaults this produces 5 events scattered randomly over the next
     20 minutes. Returns the created events, ordered by scheduled time.
 
-    Because ``bulk_create`` bypasses the ``post_save`` signal that arms single
-    creates, we arm the rows here explicitly — with clocked tasks there is no
-    eager-fire race, so arming at creation is safe and means near-term events
-    don't have to wait for the periodic reconciler.
+    Arming is intentionally left to the windower (``sync_event_window``): events
+    are created PENDING and only get a clocked beat row once they enter the 60s
+    horizon, so creating a large backlog stays cheap.
     """
     if count < 1:
         raise ValueError("count must be >= 1")
@@ -73,10 +78,7 @@ def generate_future_events(count: int = 5, within_minutes: int = 20) -> list[Eve
         )
         for i, offset in enumerate(offsets)
     ]
-    created = Event.objects.bulk_create(events)
-    for event in created:
-        _arm_event(event)
-    return created
+    return Event.objects.bulk_create(events)
 
 
 # ── Exact-time scheduling via clocked beat tasks ─────────────────────────────
@@ -139,6 +141,25 @@ def _arm_event(event: Event) -> bool:
     return True
 
 
+def _disarm_event(event: Event) -> bool:
+    """Return a SCHEDULED event to PENDING and delete its clocked beat row.
+
+    The inverse of ``_arm_event``: used when a re-time pushes an armed event back
+    beyond the window. The status-guarded ``SCHEDULED → PENDING`` claim is the
+    dedup lock (symmetric with arming), so a concurrent fire/disarm that loses the
+    claim leaves the row alone. Returns ``True`` if this call disarmed it.
+    """
+    claimed = Event.objects.filter(pk=event.pk, status=Event.Status.SCHEDULED).update(
+        status=Event.Status.PENDING, dispatch_task_id=None
+    )
+    if not claimed:
+        # Already PENDING/FIRED by another pass — leave any row to fire/cleanup.
+        return False
+
+    _teardown_clocked_task(event.id)
+    return True
+
+
 def fire_single_event(event_id: str) -> str:
     """Fire exactly one event by id. Idempotent and re-time-aware — this is the
     body of the clocked ``fire_event`` task and the backstop that keeps a stale
@@ -158,12 +179,15 @@ def fire_single_event(event_id: str) -> str:
         _teardown_clocked_task(event_id)
         return "already_fired"
 
-    # Pushed into the future since beat dispatched this row → don't fire. The
-    # re-time already moved this event's clocked schedule to the new time, so beat
-    # will dispatch again then; re-assert the arm in case this dispatch raced the
-    # re-time (e.g. beat disabled the one-off row before the new time landed).
+    # Pushed into the future since beat dispatched this row → don't fire. Re-settle
+    # against the window so a stale near-term row can't fire again before the next
+    # windower pass: keep it armed at the new time if still in-window, otherwise
+    # disarm (back to PENDING, row deleted; the windower re-arms it later).
     if event.scheduled_time > now + RETIME_TOLERANCE:
-        _write_clocked_task(event)
+        if event.scheduled_time <= now + timedelta(seconds=WINDOW_SECONDS):
+            _write_clocked_task(event)
+        else:
+            _disarm_event(event)
         return "deferred"
 
     fired = Event.objects.filter(pk=event_id, status__in=_LIVE_STATUSES).update(
@@ -184,37 +208,66 @@ def fire_single_event(event_id: str) -> str:
 
 
 def retime_event(event: Event) -> None:
-    """Handle an event whose ``scheduled_time`` just changed: move its clocked
-    schedule to the new time. No revoke, no status bounce — beat re-reads the
-    row and the wrong-time fire simply can't be dispatched because the schedule
-    itself moved.
+    """Handle an event whose ``scheduled_time`` just changed, immediately and
+    window-aware, so a re-time to "fire in 5s" doesn't wait for the next windower
+    pass:
+
+    - new time within the window → arm (or move the clocked schedule in place if
+      already SCHEDULED). No revoke — the schedule simply moves.
+    - new time beyond the window → disarm if armed (back to PENDING, row deleted);
+      the windower re-arms it once it re-enters the horizon.
 
     Called from the ``post_save`` signal, so it only runs on genuine ORM saves
-    (admin/shell/API) — not on the scheduler's own ``.update()`` writes. If the
-    event was never armed (still PENDING), arm it now.
+    (admin/shell/API) — not on the windower's own ``.update()`` writes.
     """
     if event.status == Event.Status.FIRED:
         return
 
-    if event.status == Event.Status.SCHEDULED:
-        _write_clocked_task(event)
-    else:
-        _arm_event(event)
+    in_window = event.scheduled_time <= timezone.now() + timedelta(
+        seconds=WINDOW_SECONDS
+    )
+    if in_window:
+        if event.status == Event.Status.SCHEDULED:
+            _write_clocked_task(event)
+        else:
+            _arm_event(event)
+    elif event.status == Event.Status.SCHEDULED:
+        _disarm_event(event)
 
 
-def reconcile_pending_events() -> int:
-    """Arm any ``PENDING`` event lacking a clocked fire schedule.
+def sync_event_window(window_seconds: int = WINDOW_SECONDS) -> tuple[int, int]:
+    """Reconcile the armed set to "events due within ``window_seconds``".
 
-    Backstop for rows created or edited by paths that bypass the ``post_save``
-    signal (bulk writes, ``QuerySet.update``). ``_arm_event``'s PENDING-guarded
-    claim makes this safe to run concurrently with other armers. Returns the
-    number armed this pass.
+    Run periodically (every 10s), this is the steady-state engine *and* the
+    backstop for rows created/edited by paths that bypass the ``post_save`` signal
+    (bulk writes, ``QuerySet.update``):
+
+    - **Arm forward** every PENDING event due within the horizon (including
+      past-due ones — their clocked_time is in the past, so beat fires them at the
+      next tick).
+    - **Disarm backward** every SCHEDULED event now beyond the horizon (re-timed
+      further out): back to PENDING, clocked row deleted.
+
+    The status-guarded ``_arm_event`` / ``_disarm_event`` claims make overlapping
+    passes safe. Returns ``(armed, disarmed)``.
     """
+    horizon = timezone.now() + timedelta(seconds=window_seconds)
+
     armed = 0
-    for event in Event.objects.filter(status=Event.Status.PENDING):
+    for event in Event.objects.filter(
+        status=Event.Status.PENDING, scheduled_time__lte=horizon
+    ):
         if _arm_event(event):
             armed += 1
-    return armed
+
+    disarmed = 0
+    for event in Event.objects.filter(
+        status=Event.Status.SCHEDULED, scheduled_time__gt=horizon
+    ):
+        if _disarm_event(event):
+            disarmed += 1
+
+    return armed, disarmed
 
 
 def cleanup_fired_clocked_tasks() -> int:

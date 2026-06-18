@@ -6,7 +6,7 @@ from .services import (
     cleanup_fired_clocked_tasks,
     fire_single_event,
     generate_future_events,
-    reconcile_pending_events,
+    sync_event_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,15 +37,15 @@ def fire_event(event_id: str) -> str:
 
 
 @shared_task
-def reconcile_pending_events_task() -> int:
-    """Periodic backstop: arm any PENDING event missing a clocked fire schedule
-    (covers bulk creates / out-of-band edits that bypass the re-time signal).
-    Returns the number armed this pass.
+def sync_event_window_task() -> dict[str, int]:
+    """Periodic windower (every 10s): arm PENDING events entering the 60s horizon
+    and disarm SCHEDULED events re-timed back beyond it. This bounds the number of
+    clocked beat rows to "events firing soon". Returns the arm/disarm counts.
     """
-    armed = reconcile_pending_events()
-    if armed:
-        logger.info("reconcile_pending_events armed %d event(s)", armed)
-    return armed
+    armed, disarmed = sync_event_window()
+    if armed or disarmed:
+        logger.info("sync_event_window armed %d, disarmed %d event(s)", armed, disarmed)
+    return {"armed": armed, "disarmed": disarmed}
 
 
 @shared_task

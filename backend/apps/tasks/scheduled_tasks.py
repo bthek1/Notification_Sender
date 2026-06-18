@@ -44,17 +44,17 @@ SCHEDULED_TASKS = [
         "enabled": True,
     },
     {
-        # Backstop reconciler: arm any PENDING event that has no clocked fire
-        # schedule. Firing itself is driven by per-event one-off ClockedSchedule
-        # rows that beat dispatches directly — there is no rolling-window armer.
-        # This only catches events created/edited by paths that bypass the
-        # post_save signal (e.g. QuerySet.update); near-term events are armed at
-        # creation, so a 1-minute cadence is ample.
-        "name": "notifications-reconcile-pending",
-        "task": "apps.notifications.tasks.reconcile_pending_events_task",
+        # Rolling windower: every 10s, arm a one-off clocked fire task for each
+        # PENDING event entering the next 60s, and disarm (delete the clocked row,
+        # back to PENDING) any SCHEDULED event re-timed beyond it. This bounds the
+        # number of clocked beat rows to "events firing soon" — creating millions
+        # of far-future events stays cheap. Firing itself is driven by the clocked
+        # rows beat dispatches.
+        "name": "notifications-schedule-window",
+        "task": "apps.notifications.tasks.sync_event_window_task",
         "schedule_type": "interval",
-        "every": 1,
-        "period": "minutes",
+        "every": 10,
+        "period": "seconds",
         "enabled": True,
     },
     {

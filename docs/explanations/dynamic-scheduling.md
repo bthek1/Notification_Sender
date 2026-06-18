@@ -63,41 +63,50 @@ This per-tick granularity is the key trade-off to understand for **accuracy** (b
 
 The original approach polled: a single `fire_events` task ran every five minutes and bulk-marked every past-due event. That makes the delay between `scheduled_time` and `fired_at` as large as the poll interval — minutes — which is the dominant source by far.
 
-We instead **give each event its own one-off `ClockedSchedule` + `PeriodicTask`**, and let **beat** dispatch it (see [docs/plans/completed/clocked-event-firing.md](../plans/completed/clocked-event-firing.md)):
+We instead **arm a one-off `ClockedSchedule` + `PeriodicTask` per event, but only within a rolling 60-second window**, and let **beat** dispatch it (see [docs/plans/completed/windowed-clocked-arming.md](../plans/completed/windowed-clocked-arming.md)):
 
-1. When an event is created or re-timed, `_arm_event` claims it `pending → scheduled` and writes a one-off `PeriodicTask` named `fire-event-<id>` pointing at a `ClockedSchedule` for its `scheduled_time` (args `[id]`, `one_off=True`). The `ClockedSchedule` is deduped by time, so many events at the same instant share one row.
-2. **Beat** scans all clocked rows every tick and dispatches each at the first tick `≥ clocked_time`. There is **no rolling-window armer** — beat already sees every clocked row regardless of how far out it is, so arming happens once, at creation.
-3. `fire_event` (`fire_single_event`) is **idempotent and re-time-aware**: it no-ops an already-fired event, skips one whose time was pushed into the future since beat dispatched it, and on a successful fire **tears down** its `PeriodicTask` row.
+1. A **windower** (`sync_event_window`, every **10 s**) finds `pending` events whose `scheduled_time` is within the next **60 s** and arms each: `_arm_event` claims it `pending → scheduled` and writes a one-off `PeriodicTask` named `fire-event-<id>` pointing at a `ClockedSchedule` for its `scheduled_time` (args `[id]`, `one_off=True`). The `ClockedSchedule` is deduped by time, so many events at the same instant share one row.
+2. The same pass **disarms backward**: any `scheduled` event whose time was pushed back beyond the 60 s horizon is returned to `pending` and its clocked row deleted (`_disarm_event`).
+3. **Beat** scans the (small) set of clocked rows every tick and dispatches each at the first tick `≥ clocked_time`. Because arming is window-bounded, the number of clocked beat rows tracks "events firing soon", **not the entire future backlog** — which can be millions.
+4. `fire_event` (`fire_single_event`) is **idempotent and re-time-aware**: it no-ops an already-fired event, skips (and re-settles) one whose time was pushed into the future since beat dispatched it, and on a successful fire **tears down** its `PeriodicTask` row.
 
-> **Beat is on the hot path.** Every fire now depends on beat running — a beat outage stops all firing (with ETA, already-armed tasks would still fire from the broker). In exchange there are **no long-lived broker messages** and **no best-effort revoke**. The DB stays the source of truth, so a restarted beat re-reads every clocked row and resumes.
+> **Why a window?** Arming every future event would bloat `django_celery_beat_periodictask`, and beat re-reads every clocked row each tick (a 1 s loop), so a large armed set makes every tick scan a huge table. Bounding the armed set to the next minute keeps both the table and the per-tick scan flat regardless of backlog size. The window math: a 10 s scan over a 60 s horizon arms an event ≥ ~50 s before it fires — ample lead.
 
-> **No sweeper, but a reconciler + cleanup.** A `pending` event that never got armed (e.g. a bulk write that bypassed the `post_save` signal) is caught by `reconcile_pending_events` (periodic, every 1 min), which arms any unarmed `pending` row. `cleanup_fired_clocked_tasks` (periodic, every 10 min) deletes `fire-event-*` rows for gone/fired events and sweeps orphaned `ClockedSchedule` rows so the beat tables don't grow unbounded.
+> **Beat is on the hot path.** Every fire depends on beat running — a beat outage stops all firing (with ETA, already-armed tasks would still fire from the broker). In exchange there are **no long-lived broker messages** and **no best-effort revoke**. The DB stays the source of truth, so a restarted beat re-reads the live clocked rows and resumes.
+
+> **Cleanup.** `cleanup_fired_clocked_tasks` (periodic, every 10 min) deletes `fire-event-*` rows for gone/fired events and sweeps orphaned `ClockedSchedule` rows, in case a fire disabled a one-off row without tearing it down.
 
 ### The event state machine
 
 `Event.status` makes the dispatch lifecycle explicit:
 
 ```
-            arm: write clocked PeriodicTask        beat dispatches at tick ≥ clocked_time
+        windower arms (enters 60s window)      beat dispatches at tick ≥ clocked_time
   PENDING ──────────────────────────────────▶ SCHEDULED ──────────────────────────────────▶ FIRED
      ▲                                             │
      └─────────────────────────────────────────────┘
-        reconciler arms an unarmed PENDING row;  re-time moves the clocked schedule in place (stays SCHEDULED)
+        windower disarms (re-timed back > 60s out): delete clocked row, return to PENDING
 ```
 
-- **`pending`** — created, not yet armed. The arm's claim (`status=PENDING` → `SCHEDULED`) is the **dedup lock**: a concurrent armer that loses the claim never writes an orphan row.
-- **`scheduled`** — a one-off clocked `fire_event` `PeriodicTask` exists for the exact time. A re-time **updates that row's schedule in place** — the event stays `scheduled`, no bounce back to `pending`.
+- **`pending`** — created, not yet armed (the default for any event more than 60 s out). The arm's claim (`status=PENDING` → `SCHEDULED`) is the **dedup lock**: a concurrent armer that loses the claim never writes an orphan row.
+- **`scheduled`** — within the window; a one-off clocked `fire_event` `PeriodicTask` exists for the exact time. A re-time inside the window **updates that row's schedule in place**; a re-time beyond the window **disarms** it (delete row, back to `pending`).
 - **`fired`** — terminal. The fire is a status-guarded `UPDATE` over `{pending, scheduled}`, so an event can never fire twice; the `PeriodicTask` row is then deleted.
 
 ### How dynamic re-timing stays accurate
 
-Changing an event's `scheduled_time` via the ORM (admin/shell/API) triggers a `post_save` signal → `retime_event`, which **moves the clocked schedule** (`get_or_create` a `ClockedSchedule` at the new time, repoint the `PeriodicTask`). **No revoke** — the wrong-time fire simply can't be dispatched because the schedule itself moved. Beat re-reads the row and dispatches at the new time. The idempotent `fire_event` remains the backstop for the narrow window where beat dispatched the old time just before the edit landed: it sees the event isn't due yet, defers, and re-asserts the arm.
+Changing an event's `scheduled_time` via the ORM (admin/shell/API) triggers a `post_save` signal → `retime_event`, which is **immediate and window-aware** so a re-time to "fire in 5 s" doesn't wait for the next windower pass:
+
+- new time **within** the 60 s window → arm (or move the clocked schedule in place if already `scheduled`). **No revoke** — the schedule simply moves.
+- new time **beyond** the window → disarm if armed (delete the clocked row, back to `pending`); the windower re-arms it once it re-enters the horizon.
+
+The idempotent `fire_event` is the backstop for the narrow race where beat dispatched a near-term row just before a re-time pushed the event out: it sees the event isn't due, defers, and re-settles the row against the window.
 
 ### Residual sources of delay
 
 1. **Beat loop interval** — the dominant floor. A clocked task fires at the first beat tick `≥ clocked_time`, so accuracy is bounded by `CELERY_BEAT_MAX_LOOP_INTERVAL` (set to **1 s** here). This replaces ETA's sub-second worker-wake jitter — it is the central cost of the clocked design.
-2. **Broker + worker pickup** — once beat enqueues, a free worker picks it up. Usually milliseconds; longer if all workers are busy (`CELERY_WORKER_PREFETCH_MULTIPLIER = 1` and `CELERY_TASK_ACKS_LATE = True` keep long tasks from starving short ones).
-3. **Clock/timezone** — `CELERY_TIMEZONE` follows Django's `TIME_ZONE`. Always store and compare timezone-aware datetimes.
+2. **Arming latency for near-term events** — an event created (or re-timed out-of-band) with `scheduled_time` sooner than the next windower pass (≤ ~10 s out) isn't armed until that pass, then fires immediately with a past `clocked_time` — so it can be up to one scan interval + one beat tick late. A re-time *through the signal* arms immediately, avoiding this; events spread over minutes (the harness default) are unaffected.
+3. **Broker + worker pickup** — once beat enqueues, a free worker picks it up. Usually milliseconds; longer if all workers are busy (`CELERY_WORKER_PREFETCH_MULTIPLIER = 1` and `CELERY_TASK_ACKS_LATE = True` keep long tasks from starving short ones).
+4. **Clock/timezone** — `CELERY_TIMEZONE` follows Django's `TIME_ZONE`. Always store and compare timezone-aware datetimes.
 
 **How we measure it:** each `Event` row carries its *scheduled* time (`scheduled_time`) and, once fired, its *actual* fire time (`fired_at`, set to `timezone.now()` at execution, stamped per event). The delta between the two is the accuracy of a single event. `django-celery-results` separately records each task run's timing.
 
@@ -108,7 +117,7 @@ Changing an event's `scheduled_time` via the ORM (admin/shell/API) triggers a `p
 - `core/celery.py` — the Celery app; autodiscovers each app's `tasks.py`.
 - `core/settings/base.py` — the `CELERY_*` config, including `CELERY_BEAT_SCHEDULER`.
 - `docker-compose.yml` — `celery_worker` and `celery_beat` services (beat runs with `--scheduler django_celery_beat.schedulers:DatabaseScheduler`).
-- `apps/notifications/` — the `Event` model (a point-in-time row with `scheduled_time`/`status`/`fired_at`/`dispatch_task_id`), the `generate_events` task that seeds + arms future events, `_arm_event`/`retime_event` (write and move the per-event clocked `PeriodicTask`), the `fire_event` task that fires one event when beat dispatches it, and the `reconcile_pending_events` / `cleanup_fired_clocked_tasks` backstops. A `post_save` signal arms new events and moves the clocked schedule when `scheduled_time` changes, so an event re-times accurately with no restart. Tune the reconciler/cleanup cadence in `apps/tasks/scheduled_tasks.py`.
+- `apps/notifications/` — the `Event` model (a point-in-time row with `scheduled_time`/`status`/`fired_at`/`dispatch_task_id`), the `generate_events` task that seeds future events (left `pending`), `sync_event_window` (the windower that arms in-horizon `pending` events and disarms re-timed-out `scheduled` ones), `_arm_event`/`_disarm_event`/`retime_event`, the `fire_event` task that fires one event when beat dispatches it, and the `cleanup_fired_clocked_tasks` backstop. A `post_save` signal re-settles the clocked schedule when `scheduled_time` changes (creation is left to the windower), so an event re-times accurately with no restart. Tune the window/scan cadence in `apps/tasks/scheduled_tasks.py`.
 - `apps/tasks/` — periodic-schedule management: `SCHEDULED_TASKS` (the in-git source of truth), the `sync_scheduled_tasks` command that applies it to `PeriodicTask` rows, and the `/api/tasks/` schedule/result API. See [docs/guides/background-tasks.md](../guides/background-tasks.md).
 
 ## Further reading

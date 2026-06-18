@@ -13,18 +13,19 @@ from apps.notifications.models import Event
 from apps.notifications.services import (
     FIRE_TASK,
     _arm_event,
+    _disarm_event,
     cleanup_fired_clocked_tasks,
     fire_single_event,
     fire_task_name,
     generate_future_events,
-    reconcile_pending_events,
     retime_event,
+    sync_event_window,
 )
 from apps.notifications.tasks import (
     cleanup_fired_clocked_tasks_task,
     fire_event,
     generate_events,
-    reconcile_pending_events_task,
+    sync_event_window_task,
 )
 
 
@@ -61,15 +62,14 @@ class TestGenerateFutureEvents:
         # Not all gaps equal -> events are not evenly spaced.
         assert len(set(gaps)) > 1
 
-    def test_all_events_armed_at_creation(self):
-        # bulk_create bypasses the post_save signal, so generate arms explicitly:
-        # every created event is SCHEDULED with its own clocked PeriodicTask.
+    def test_events_created_pending_and_unarmed(self):
+        # Arming is left to the windower — generate creates plain PENDING rows with
+        # no clocked beat tasks, so a large backlog stays cheap.
         events = generate_future_events(count=3, within_minutes=10)
-        assert Event.objects.filter(status=Event.Status.SCHEDULED).count() == 3
+        assert Event.objects.filter(status=Event.Status.PENDING).count() == 3
+        assert PeriodicTask.objects.count() == 0
         for event in events:
-            pt = _pt(event)
-            assert pt is not None
-            assert pt.clocked.clocked_time == event.scheduled_time
+            assert _pt(event) is None
 
     def test_invalid_count_raises(self):
         with pytest.raises(ValueError, match="count must be"):
@@ -139,15 +139,11 @@ class TestArmEvent:
 
     def test_claims_pending_and_writes_clocked_task(self):
         now = timezone.now()
+        # create no longer arms — the row starts plain PENDING with no beat task.
         event = Event.objects.create(
-            title="e", scheduled_time=now + timedelta(minutes=3)
+            title="e", scheduled_time=now + timedelta(seconds=30)
         )
-        # The create signal already armed it; clear and re-arm to assert directly.
-        _pt(event).delete()
-        Event.objects.filter(pk=event.pk).update(
-            status=Event.Status.PENDING, dispatch_task_id=None
-        )
-        event.refresh_from_db()
+        assert _pt(event) is None
 
         assert _arm_event(event) is True
         event.refresh_from_db()
@@ -178,11 +174,35 @@ class TestArmEvent:
 
     def test_dedups_clocked_schedule_by_time(self):
         now = timezone.now()
-        t = now + timedelta(minutes=4)
+        t = now + timedelta(seconds=30)
         e1 = Event.objects.create(title="a", scheduled_time=t)
         e2 = Event.objects.create(title="b", scheduled_time=t)
+        _arm_event(e1)
+        _arm_event(e2)
         assert _pt(e1).clocked_id == _pt(e2).clocked_id
         assert ClockedSchedule.objects.filter(clocked_time=t).count() == 1
+
+    def test_disarm_reverts_to_pending_and_deletes_row(self):
+        now = timezone.now()
+        event = Event.objects.create(
+            title="d", scheduled_time=now + timedelta(seconds=30)
+        )
+        _arm_event(event)
+        assert _pt(event) is not None
+
+        assert _disarm_event(event) is True
+        event.refresh_from_db()
+        assert event.status == Event.Status.PENDING
+        assert event.dispatch_task_id is None
+        assert _pt(event) is None
+
+    def test_disarm_lost_race_returns_false(self):
+        now = timezone.now()
+        # Already PENDING (not SCHEDULED) → the disarm claim matches nothing.
+        event = Event.objects.create(
+            title="d", scheduled_time=now + timedelta(seconds=30)
+        )
+        assert _disarm_event(event) is False
 
 
 @pytest.mark.django_db
@@ -224,21 +244,42 @@ class TestFireSingleEvent:
         mocker.patch("django.db.models.query.QuerySet.update", return_value=0)
         assert fire_single_event(str(event.id)) == "noop"
 
-    def test_retimed_later_defers_and_reasserts_arm(self):
+    def test_deferred_within_window_keeps_arm_at_new_time(self):
+        # Pushed a little later but still inside the window: stay SCHEDULED, arm
+        # re-asserted at the new time.
         now = timezone.now()
         event = Event.objects.create(
             title="moved",
-            scheduled_time=now + timedelta(minutes=5),
+            scheduled_time=now + timedelta(seconds=30),
             status=Event.Status.SCHEDULED,
             dispatch_task_id=fire_task_name(uuid.uuid4()),
         )
         assert fire_single_event(str(event.id)) == "deferred"
         event.refresh_from_db()
-        # Stays SCHEDULED (no bounce to PENDING); arm re-asserted at the new time.
         assert event.status == Event.Status.SCHEDULED
         pt = _pt(event)
         assert pt is not None
         assert pt.clocked.clocked_time == event.scheduled_time
+
+    def test_deferred_beyond_window_disarms(self):
+        # Pushed well past the window: disarm (back to PENDING, row deleted); the
+        # windower re-arms it once it re-enters the horizon.
+        now = timezone.now()
+        event = Event.objects.create(
+            title="moved", scheduled_time=now + timedelta(seconds=30)
+        )
+        _arm_event(event)  # SCHEDULED + clocked row at +30s
+        # Push beyond the window via a raw update (bypasses the re-time signal),
+        # leaving a stale near-term clocked row for fire to tear down.
+        Event.objects.filter(pk=event.pk).update(
+            scheduled_time=now + timedelta(minutes=5)
+        )
+        event.refresh_from_db()
+
+        assert fire_single_event(str(event.id)) == "deferred"
+        event.refresh_from_db()
+        assert event.status == Event.Status.PENDING
+        assert _pt(event) is None
 
     def test_missing_event_tears_down_stray_row(self):
         ghost_id = uuid.uuid4()
@@ -259,50 +300,66 @@ class TestFireSingleEvent:
 
 @pytest.mark.django_db
 class TestRetimeOnSave:
-    """Changing a scheduled event's time moves its clocked schedule in place —
-    no revoke, no status bounce."""
+    """A re-time is immediate and window-aware: arm/move if the new time is inside
+    the 60s window, disarm if it's pushed beyond it."""
 
-    def test_changing_time_moves_clocked_schedule_in_place(self):
+    def test_retime_into_window_arms(self):
+        # Unarmed PENDING far out → re-timed into the window → armed immediately.
         now = timezone.now()
         Event.objects.create(title="e", scheduled_time=now + timedelta(minutes=30))
         event = Event.objects.get(title="e")  # reload → _loaded_scheduled_time set
-        pt_pk_before = _pt(event).pk
-        new_time = now + timedelta(minutes=5)
-        event.scheduled_time = new_time
+        assert _pt(event) is None
+        event.scheduled_time = now + timedelta(seconds=30)
         event.save()
 
         event.refresh_from_db()
         assert event.status == Event.Status.SCHEDULED
         pt = _pt(event)
         assert pt is not None
+        assert pt.clocked.clocked_time == event.scheduled_time
+
+    def test_retime_within_window_moves_in_place(self):
+        now = timezone.now()
+        seed = Event.objects.create(
+            title="m", scheduled_time=now + timedelta(seconds=20)
+        )
+        _arm_event(seed)
+        event = Event.objects.get(pk=seed.pk)  # reload with status SCHEDULED
+        pt_pk_before = _pt(event).pk
+        new_time = now + timedelta(seconds=45)
+        event.scheduled_time = new_time
+        event.save()
+
+        event.refresh_from_db()
+        assert event.status == Event.Status.SCHEDULED
+        pt = _pt(event)
         assert pt.clocked.clocked_time == new_time
         # Same row updated in place (not a new task), and exactly one exists.
         assert pt.pk == pt_pk_before
         assert PeriodicTask.objects.filter(name=fire_task_name(event.id)).count() == 1
 
-    def test_retime_of_unarmed_event_arms_it(self):
+    def test_retime_out_of_window_disarms(self):
         now = timezone.now()
-        event = Event.objects.create(
-            title="f", scheduled_time=now + timedelta(minutes=5)
+        seed = Event.objects.create(
+            title="o", scheduled_time=now + timedelta(seconds=30)
         )
-        # Force it back to an unarmed PENDING state (e.g. a create that bypassed
-        # arming): drop the row and reset status.
-        PeriodicTask.objects.filter(name=fire_task_name(event.id)).delete()
-        Event.objects.filter(pk=event.pk).update(
-            status=Event.Status.PENDING, dispatch_task_id=None
-        )
-        event = Event.objects.get(pk=event.pk)
-        event.scheduled_time = now + timedelta(minutes=8)
+        _arm_event(seed)
+        event = Event.objects.get(pk=seed.pk)
+        event.scheduled_time = now + timedelta(minutes=10)
         event.save()
 
         event.refresh_from_db()
-        assert event.status == Event.Status.SCHEDULED
-        assert _pt(event) is not None
+        assert event.status == Event.Status.PENDING
+        assert event.dispatch_task_id is None
+        assert _pt(event) is None
 
     def test_save_without_time_change_keeps_schedule(self):
         now = timezone.now()
-        Event.objects.create(title="g", scheduled_time=now + timedelta(minutes=5))
-        event = Event.objects.get(title="g")
+        seed = Event.objects.create(
+            title="g", scheduled_time=now + timedelta(seconds=30)
+        )
+        _arm_event(seed)
+        event = Event.objects.get(pk=seed.pk)
         before = _pt(event).clocked_id
         event.title = "g renamed"
         event.save()
@@ -312,7 +369,7 @@ class TestRetimeOnSave:
         now = timezone.now()
         event = Event.objects.create(
             title="h",
-            scheduled_time=now + timedelta(minutes=5),
+            scheduled_time=now + timedelta(seconds=30),
             status=Event.Status.FIRED,
             fired_at=now,
         )
@@ -321,30 +378,85 @@ class TestRetimeOnSave:
 
 
 @pytest.mark.django_db
-class TestReconciler:
-    def test_arms_pending_events_missing_a_schedule(self):
+class TestSyncEventWindow:
+    """The windower arms PENDING events entering the 60s horizon and disarms
+    SCHEDULED events re-timed beyond it — keeping the armed set bounded."""
+
+    def test_arms_only_pending_within_window(self):
         now = timezone.now()
-        # Simulate a bulk/out-of-band create that bypassed the signal.
+        in_window = Event.objects.create(
+            title="soon", scheduled_time=now + timedelta(seconds=30)
+        )
+        out_window = Event.objects.create(
+            title="later", scheduled_time=now + timedelta(minutes=10)
+        )
+
+        armed, disarmed = sync_event_window()
+
+        assert (armed, disarmed) == (1, 0)
+        in_window.refresh_from_db()
+        out_window.refresh_from_db()
+        assert in_window.status == Event.Status.SCHEDULED
+        assert _pt(in_window) is not None
+        # The far-future event is left untouched — the whole point of the window.
+        assert out_window.status == Event.Status.PENDING
+        assert _pt(out_window) is None
+
+    def test_arms_past_due_pending(self):
+        now = timezone.now()
+        overdue = Event.objects.create(
+            title="overdue", scheduled_time=now - timedelta(seconds=5)
+        )
+        armed, _ = sync_event_window()
+        assert armed == 1
+        overdue.refresh_from_db()
+        assert overdue.status == Event.Status.SCHEDULED
+        assert _pt(overdue).clocked.clocked_time == overdue.scheduled_time
+
+    def test_does_not_rearm_already_scheduled(self):
+        now = timezone.now()
+        event = Event.objects.create(
+            title="armed", scheduled_time=now + timedelta(seconds=30)
+        )
+        _arm_event(event)
+        assert sync_event_window() == (0, 0)
+
+    def test_disarms_scheduled_pushed_beyond_window(self):
+        now = timezone.now()
+        event = Event.objects.create(
+            title="pushed", scheduled_time=now + timedelta(seconds=30)
+        )
+        _arm_event(event)  # SCHEDULED + row
+        # Pushed out of window by a path that bypassed the signal.
+        Event.objects.filter(pk=event.pk).update(
+            scheduled_time=now + timedelta(minutes=10)
+        )
+
+        armed, disarmed = sync_event_window()
+
+        assert (armed, disarmed) == (0, 1)
+        event.refresh_from_db()
+        assert event.status == Event.Status.PENDING
+        assert event.dispatch_task_id is None
+        assert _pt(event) is None
+
+    def test_arms_bulk_created_events_in_window(self):
+        now = timezone.now()
+        # bulk_create bypasses post_save; the windower is the backstop.
         Event.objects.bulk_create(
             [
-                Event(title="x", scheduled_time=now + timedelta(minutes=2)),
-                Event(title="y", scheduled_time=now + timedelta(minutes=3)),
+                Event(title="x", scheduled_time=now + timedelta(seconds=10)),
+                Event(title="y", scheduled_time=now + timedelta(seconds=40)),
             ]
         )
-        assert reconcile_pending_events() == 2
+        armed, _ = sync_event_window()
+        assert armed == 2
         assert Event.objects.filter(status=Event.Status.SCHEDULED).count() == 2
 
-    def test_skips_already_scheduled(self):
+    def test_task_wrapper_returns_counts(self):
         now = timezone.now()
-        Event.objects.create(title="armed", scheduled_time=now + timedelta(minutes=2))
-        assert reconcile_pending_events() == 0
-
-    def test_task_wrapper_returns_count(self):
-        now = timezone.now()
-        Event.objects.bulk_create(
-            [Event(title="z", scheduled_time=now + timedelta(minutes=2))]
-        )
-        assert reconcile_pending_events_task() == 1
+        Event.objects.create(title="z", scheduled_time=now + timedelta(seconds=20))
+        assert sync_event_window_task() == {"armed": 1, "disarmed": 0}
 
 
 @pytest.mark.django_db
@@ -352,8 +464,9 @@ class TestCleanup:
     def test_removes_rows_for_fired_events(self):
         now = timezone.now()
         event = Event.objects.create(
-            title="soon", scheduled_time=now + timedelta(minutes=2)
+            title="soon", scheduled_time=now + timedelta(seconds=30)
         )
+        _arm_event(event)
         assert _pt(event) is not None
         # Beat fired it but left the (disabled) row behind.
         Event.objects.filter(pk=event.pk).update(
@@ -374,8 +487,9 @@ class TestCleanup:
     def test_keeps_live_scheduled_rows(self):
         now = timezone.now()
         event = Event.objects.create(
-            title="live", scheduled_time=now + timedelta(minutes=5)
+            title="live", scheduled_time=now + timedelta(seconds=30)
         )
+        _arm_event(event)
         assert cleanup_fired_clocked_tasks() == 0
         assert _pt(event) is not None
 
@@ -387,8 +501,9 @@ class TestCleanup:
     def test_task_wrapper_returns_count(self):
         now = timezone.now()
         event = Event.objects.create(
-            title="soon", scheduled_time=now + timedelta(minutes=2)
+            title="soon", scheduled_time=now + timedelta(seconds=30)
         )
+        _arm_event(event)
         Event.objects.filter(pk=event.pk).update(
             status=Event.Status.FIRED, fired_at=now
         )
@@ -401,15 +516,21 @@ class TestStatusLifecycle:
 
     def test_full_lifecycle(self):
         now = timezone.now()
-        # 1. created → armed → SCHEDULED (due now so step 2 can fire it)
+        # 1. created → PENDING, unarmed (due now so step 3 can fire it)
         event = Event.objects.create(
             title="lifecycle", scheduled_time=now - timedelta(seconds=1)
         )
         event.refresh_from_db()
+        assert event.status == Event.Status.PENDING
+        assert _pt(event) is None
+
+        # 2. windower arms the past-due in-window event → SCHEDULED
+        assert sync_event_window() == (1, 0)
+        event.refresh_from_db()
         assert event.status == Event.Status.SCHEDULED
         assert _pt(event) is not None
 
-        # 2. clocked task fires once due → FIRED, row torn down
+        # 3. clocked task fires once due → FIRED, row torn down
         assert fire_single_event(str(event.id)) == "fired"
         event.refresh_from_db()
         assert event.status == Event.Status.FIRED

@@ -46,14 +46,12 @@ class TestSyncScheduledTasks:
         assert task.interval.period == IntervalSchedule.MINUTES
         assert json.loads(task.kwargs) == {"count": 10, "within_minutes": 5}
 
-    def test_reconcile_and_cleanup_tasks_synced(self):
+    def test_window_and_cleanup_tasks_synced(self):
         call_command("sync_scheduled_tasks")
-        reconcile = PeriodicTask.objects.get(name="notifications-reconcile-pending")
-        assert (
-            reconcile.task == "apps.notifications.tasks.reconcile_pending_events_task"
-        )
-        assert reconcile.interval.every == 1
-        assert reconcile.interval.period == IntervalSchedule.MINUTES
+        window = PeriodicTask.objects.get(name="notifications-schedule-window")
+        assert window.task == "apps.notifications.tasks.sync_event_window_task"
+        assert window.interval.every == 10
+        assert window.interval.period == IntervalSchedule.SECONDS
 
         cleanup = PeriodicTask.objects.get(name="notifications-cleanup-fired")
         assert (
@@ -98,7 +96,7 @@ class TestSyncScheduledTasks:
 
     def test_updates_changed_task(self):
         call_command("sync_scheduled_tasks")
-        task = PeriodicTask.objects.get(name="notifications-reconcile-pending")
+        task = PeriodicTask.objects.get(name="notifications-schedule-window")
         task.enabled = False
         task.save()
         call_command("sync_scheduled_tasks")
@@ -134,7 +132,7 @@ class TestScheduleAPI:
         response = auth_client.get("/api/tasks/schedules/")
         assert response.status_code == 200
         names = {row["name"] for row in response.json()}
-        assert "notifications-reconcile-pending" in names
+        assert "notifications-schedule-window" in names
         row = next(
             r for r in response.json() if r["name"] == "notifications-generate-events"
         )
@@ -143,7 +141,7 @@ class TestScheduleAPI:
 
     def test_toggle_schedule(self, auth_client):
         call_command("sync_scheduled_tasks")
-        task = PeriodicTask.objects.get(name="notifications-reconcile-pending")
+        task = PeriodicTask.objects.get(name="notifications-schedule-window")
         response = auth_client.patch(
             f"/api/tasks/schedules/{task.pk}/",
             {"enabled": False},
@@ -155,7 +153,7 @@ class TestScheduleAPI:
 
     def test_trigger_schedule(self, auth_client, mocker):
         call_command("sync_scheduled_tasks")
-        task = PeriodicTask.objects.get(name="notifications-reconcile-pending")
+        task = PeriodicTask.objects.get(name="notifications-schedule-window")
         mock_result = mocker.MagicMock()
         mock_result.id = "fired-123"
         mock_send = mocker.patch(
@@ -168,7 +166,7 @@ class TestScheduleAPI:
         mock_send.assert_called_once()
         assert (
             mock_send.call_args.args[0]
-            == "apps.notifications.tasks.reconcile_pending_events_task"
+            == "apps.notifications.tasks.sync_event_window_task"
         )
 
     def test_trigger_passes_kwargs(self, auth_client, mocker):
@@ -236,7 +234,7 @@ class TestResultsAPI:
     def test_list_results(self, auth_client):
         TaskResult.objects.create(
             task_id="abc",
-            task_name="apps.notifications.tasks.reconcile_pending_events_task",
+            task_name="apps.notifications.tasks.sync_event_window_task",
             status="SUCCESS",
         )
         response = auth_client.get("/api/tasks/results/")

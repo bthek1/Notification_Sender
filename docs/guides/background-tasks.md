@@ -56,11 +56,11 @@ maps to exactly one `PeriodicTask` row. Two schedule shapes are supported.
 
 ```python
 {
-    "name": "notifications-reconcile-pending",                          # unique identifier (also the DB row name)
-    "task": "apps.notifications.tasks.reconcile_pending_events_task",   # dotted path to the @shared_task
+    "name": "notifications-schedule-window",                      # unique identifier (also the DB row name)
+    "task": "apps.notifications.tasks.sync_event_window_task",   # dotted path to the @shared_task
     "schedule_type": "interval",
-    "every": 1,
-    "period": "minutes",                                             # seconds | minutes | hours | days
+    "every": 10,
+    "period": "seconds",                                         # seconds | minutes | hours | days
     "enabled": True,
 }
 ```
@@ -129,20 +129,23 @@ as Celery `@shared_task` functions.
 
 | Task | Schedule | What it does |
 |---|---|---|
-| `generate_events` | every 1 min, `count=10, within_minutes=5` | Creates `pending` `Event` rows spread across the next few minutes and arms each one |
-| `reconcile_pending_events_task` | every 1 min | Backstop: arms any `pending` event missing a clocked fire schedule (covers bulk/out-of-band creates that bypass the signal) |
+| `generate_events` | every 1 min, `count=10, within_minutes=5` | Creates `pending` `Event` rows spread across the next few minutes (left unarmed) |
+| `sync_event_window_task` | every 10 s | Windower: arms `pending` events entering the next 60 s and disarms `scheduled` events re-timed back beyond it — keeps the clocked-row set bounded |
 | `cleanup_fired_clocked_tasks_task` | every 10 min | Deletes `fire-event-*` rows for gone/fired events and sweeps orphaned `ClockedSchedule` rows |
 | `fire_event` | dispatched by beat from a one-off `ClockedSchedule` | Fires one `scheduled` event when its clocked time arrives; idempotent and re-time-aware |
 
-Accuracy comes from a **clocked task per event**, not a poll: arming writes a
-one-off `fire-event-<id>` `PeriodicTask` pointing at a `ClockedSchedule` for the
-event's exact `scheduled_time`, and **beat** dispatches it at the first tick after
-that time (accuracy bounded by `CELERY_BEAT_MAX_LOOP_INTERVAL`, set to 1 s).
-Changing an event's `scheduled_time` at any moment moves that clocked schedule in
-place (via a `post_save` signal) — no revoke, no restart. The lifecycle is an
-explicit state machine — `pending → scheduled → fired` — described in
+Accuracy comes from a **clocked task per soon-to-fire event**, not a poll: the
+windower arms a one-off `fire-event-<id>` `PeriodicTask` pointing at a
+`ClockedSchedule` for each event entering a rolling **60 s** horizon, and **beat**
+dispatches it at the first tick after that time (accuracy bounded by
+`CELERY_BEAT_MAX_LOOP_INTERVAL`, set to 1 s). Arming only within the window keeps
+the beat tables bounded even with millions of far-future events. Changing an
+event's `scheduled_time` re-settles its schedule immediately (via a `post_save`
+signal — arm/move if now in-window, disarm if pushed out), no revoke, no restart.
+The lifecycle is an explicit state machine — `pending → scheduled → fired` —
+described in
 [dynamic-scheduling.md](../explanations/dynamic-scheduling.md#the-event-state-machine).
-See [docs/plans/completed/clocked-event-firing.md](../plans/completed/clocked-event-firing.md).
+See [docs/plans/completed/windowed-clocked-arming.md](../plans/completed/windowed-clocked-arming.md).
 
 ## Inspecting and controlling tasks at runtime
 

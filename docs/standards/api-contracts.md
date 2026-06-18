@@ -215,10 +215,10 @@ List all periodic tasks with their interval/crontab/clocked timing.
 [
   {
     "id": 1,
-    "name": "notifications-reconcile-pending",
-    "task": "apps.notifications.tasks.reconcile_pending_events_task",
+    "name": "notifications-schedule-window",
+    "task": "apps.notifications.tasks.sync_event_window_task",
     "enabled": true,
-    "schedule": { "type": "interval", "every": 1, "period": "minutes" },
+    "schedule": { "type": "interval", "every": 10, "period": "seconds" },
     "one_off": false,
     "args": "[]",
     "kwargs": "{}",
@@ -292,7 +292,7 @@ List recent task run results, newest first.
 [
   {
     "task_id": "<celery_task_id>",
-    "task_name": "apps.notifications.tasks.reconcile_pending_events_task",
+    "task_name": "apps.notifications.tasks.sync_event_window_task",
     "status": "SUCCESS",
     "result": "3",
     "date_created": "2026-06-18T05:20:00Z",
