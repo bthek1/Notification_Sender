@@ -12,7 +12,7 @@ This plan covers the steps to migrate the current Django project into the full m
 - `backend/` is fully restructured: `core/` (settings, urls, wsgi), `apps/accounts/`, `apps/pages/`
 - DRF API is live: JWT auth, `/api/accounts/`, `/api/token/`, `/api/health/` endpoints
 - `django manage.py check` passes with no issues
-- `frontend/` is fully scaffolded: Vite + React 18 + TypeScript, TanStack Router, TanStack Query, Axios
+- `frontend/` is fully scaffolded: Vite 8 + React 19 + TypeScript 6, TanStack Router, TanStack Query, Axios
 - Auth flow implemented: login route, JWT interceptor, silent token refresh
 - `npm run build` passes (TypeScript + Vite)
 - `docker-compose.yml` at repo root wiring `db`, `backend`, and `frontend` services

@@ -50,15 +50,17 @@ Key conventions:
 
 ## Frontend Overview
 
-- **Language / runtime:** TypeScript, Node 20, bundled with Vite
-- **Framework:** React 18
+- **Language / runtime:** TypeScript 6, Node 20, bundled with Vite 8
+- **Framework:** React 19
 - **Routing:** TanStack Router (file-based, under `src/routes/`)
 - **Server state:** TanStack Query v5 (`useQuery`, `useMutation`)
 - **HTTP client:** Axios with a JWT interceptor (`src/api/client.ts`)
-- **Styling:** Tailwind CSS v4 + shadcn/ui (`src/components/ui/`)
+- **Styling:** Tailwind CSS v4 + shadcn/ui (`base-nova` style on `@base-ui/react` primitives, not Radix; no `asChild` — use the `render` prop or `useRender` hook) (`src/components/ui/`)
 - **Forms:** React Hook Form + Zod (`src/schemas/`)
+- **Charts:** ECharts (`echarts` + `echarts-for-react`; `recharts` also available) via the lazy-loaded `src/components/charts/EChartsChart.tsx` wrapper
+- **Markdown:** react-markdown + remark-gfm (rendering markdown / LLM output)
 - **Global state:** Zustand with immer (`src/store/`)
-- **Testing:** Vitest + React Testing Library (`just fe-test`)
+- **Testing:** Vitest 4 + React Testing Library, MSW for API mocking (`just fe-test`)
 - **Query keys:** Centralised in `src/api/queryKeys.ts`
 
 Key conventions:

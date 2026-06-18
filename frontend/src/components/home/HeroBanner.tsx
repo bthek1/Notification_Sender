@@ -11,11 +11,11 @@ export function HeroBanner() {
         A modern full-stack web application built with Django and React.
       </p>
       <div className="flex flex-wrap justify-center gap-4">
-        <Button asChild size="lg">
-          <Link to="/login">Sign in</Link>
+        <Button render={<Link to="/login" />} size="lg">
+          Sign in
         </Button>
-        <Button asChild variant="outline" size="lg">
-          <Link to="/signup">Create account</Link>
+        <Button render={<Link to="/signup" />} variant="outline" size="lg">
+          Create account
         </Button>
       </div>
     </section>

@@ -72,7 +72,7 @@ AUTH_USER_MODEL = "accounts.CustomUser"
 
 ## Frontend (`frontend/`)
 
-**Stack:** React 18, TypeScript, Vite, TanStack Router, TanStack Query v5, Axios, Tailwind CSS v4, shadcn/ui, React Hook Form, Zod, Zustand, Vitest, date-fns, Plotly.js
+**Stack:** React 19, TypeScript 6, Vite 8, TanStack Router, TanStack Query v5, Axios, Tailwind CSS v4, shadcn/ui (`base-nova` style on `@base-ui/react`), React Hook Form, Zod, Zustand, Vitest 4, MSW, date-fns, ECharts (`echarts` + `echarts-for-react`, `recharts` also available), react-markdown + remark-gfm
 
 **Conventions:**
 - Functional components only — no class components
@@ -87,7 +87,7 @@ AUTH_USER_MODEL = "accounts.CustomUser"
 - Query keys are defined as constants in `src/api/queryKeys.ts`
 - Use `cn()` from `src/lib/utils.ts` for all conditional `className` merging (wraps `clsx` + `tailwind-merge`)
 - All path imports use the `@/` alias (resolves to `src/`) — never use relative `../../` imports across feature boundaries
-- shadcn/ui components live in `src/components/ui/` — copy-paste via `npx shadcn@latest add <component>`, never modify generated files directly
+- shadcn/ui components live in `src/components/ui/` — copy-paste via `npx shadcn@latest add <component>`, never modify generated files directly. This project uses the `base-nova` style built on `@base-ui/react` primitives (not Radix); Base UI has no `asChild` — compose via the `render` prop or `useRender` hook
 
 **Styling — Tailwind CSS + shadcn/ui:**
 ```ts
@@ -181,7 +181,7 @@ export const Route = createFileRoute('/users/$userId')({
 
 **Utilities:**
 - Date formatting: `date-fns` — always import via `src/lib/date.ts` wrappers, never call `date-fns` directly in components
-- Charts: `plotly.js-dist-min` — always via the `src/components/charts/PlotlyChart.tsx` wrapper, always lazy-loaded
+- Charts: ECharts (`echarts` + `echarts-for-react`; `recharts` also available) — always via the `src/components/charts/EChartsChart.tsx` wrapper, always lazy-loaded. The wrapper takes an `option` prop (an `EChartsOption`), not `data`/`layout`/`config`
 
 **Env vars:** Prefix with `VITE_`. Access via `import.meta.env.VITE_*`.
 
@@ -244,7 +244,7 @@ Key commands:
 │   │   ├── api/               # Axios client, endpoint functions, queryKeys
 │   │   ├── components/
 │   │   │   ├── ui/            # shadcn/ui copy-paste components
-│   │   │   └── charts/        # PlotlyChart wrapper (lazy-loaded)
+│   │   │   └── charts/        # EChartsChart wrapper (lazy-loaded)
 │   │   ├── hooks/             # Custom hooks (business logic)
 │   │   ├── lib/               # Shared utilities: cn(), date wrappers
 │   │   ├── routes/            # TanStack Router file-based routes

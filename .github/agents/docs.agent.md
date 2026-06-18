@@ -115,7 +115,7 @@ Entries in `docs/standards/api-contracts.md` must document:
 
 **Stack summary:**
 - Backend: Python 3.13, Django 5.1+, DRF, PostgreSQL, JWT auth (`simplejwt`)
-- Frontend: React 18, TypeScript, Vite, TanStack Router, TanStack Query v5, Tailwind CSS v4, shadcn/ui, Zustand, Zod
+- Frontend: React 19, TypeScript 6, Vite 8, TanStack Router, TanStack Query v5, Tailwind CSS v4, shadcn/ui, Zustand, Zod
 - Package managers: `uv` (backend), `npm` (frontend)
 - Task runner: `justfile` (`just --list` for all commands)
 - Docker Compose for local services (PostgreSQL)

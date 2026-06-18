@@ -14,6 +14,7 @@ export interface TokenPair {
 export interface RegisterPayload {
   email: string
   password: string
+  confirm_password?: string
 }
 
 export interface LoginPayload {

@@ -33,8 +33,12 @@ export function useTaskPoller<T = unknown>(
   useEffect(() => {
     if (!taskId) return;
 
+    // Reset polling state synchronously when taskId changes, before kicking off
+    // the async poll loop. This intentionally sets state from the effect body.
+    /* eslint-disable react-hooks/set-state-in-effect */
     setIsPolling(true);
     setError(null);
+    /* eslint-enable react-hooks/set-state-in-effect */
 
     const poll = async () => {
       try {

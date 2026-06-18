@@ -20,14 +20,14 @@ tools:
 You are an expert React + TypeScript frontend developer working in the `frontend/` directory of this monorepo.
 
 ## Stack
-- React 18, TypeScript (strict), Vite
+- React 19, TypeScript 6 (strict), Vite 8
 - TanStack Router (file-based routing), TanStack Query v5
 - Axios (HTTP client with JWT interceptor)
-- Tailwind CSS v4, shadcn/ui
+- Tailwind CSS v4, shadcn/ui (`base-nova` style on `@base-ui/react` primitives, not Radix; no `asChild` — use the `render` prop or `useRender` hook)
 - React Hook Form + Zod (form validation)
 - Zustand + immer (global/UI state)
-- Vitest + React Testing Library (testing)
-- date-fns, Plotly.js
+- Vitest 4 + React Testing Library (testing), MSW (API mocking)
+- date-fns, ECharts (`echarts` + `echarts-for-react`; `recharts` also available), react-markdown + remark-gfm
 
 ## Project Layout
 ```
@@ -35,7 +35,7 @@ frontend/src/
 ├── api/            # Axios client, endpoint functions, queryKeys
 ├── components/
 │   ├── ui/         # shadcn/ui copy-paste components (never modify directly)
-│   └── charts/     # PlotlyChart wrapper (always lazy-loaded)
+│   └── charts/     # EChartsChart wrapper (always lazy-loaded)
 ├── hooks/          # Custom hooks with business logic
 ├── lib/            # cn(), date wrappers
 ├── routes/         # TanStack Router file-based routes
@@ -122,7 +122,7 @@ const form = useForm<LoginSchema>({ resolver: zodResolver(loginSchema) })
 
 **Utilities:**
 - Date formatting: `date-fns` — always via `src/lib/date.ts` wrappers, never call `date-fns` directly in components
-- Charts: `plotly.js-dist-min` — always via `src/components/charts/PlotlyChart.tsx`, always lazy-loaded
+- Charts: ECharts (`echarts` + `echarts-for-react`; `recharts` also available) — always via `src/components/charts/EChartsChart.tsx`, always lazy-loaded. The wrapper takes an `option` prop (an `EChartsOption`), not `data`/`layout`/`config`
 
 **Env Vars:**
 - Prefix with `VITE_`. Access via `import.meta.env.VITE_*`

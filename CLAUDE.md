@@ -19,7 +19,7 @@ backend/   Django REST API + Celery (Python 3.13, uv, PostgreSQL, Redis)
   core/    settings/ (base|dev|prod|test), urls.py, celery.py
   apps/    accounts/ (CustomUser, JWT), pages/ (health + /api/tasks/ demo)
            notifications/ — PLANNED (see the design spec)
-frontend/  React 18 SPA (Vite, TS, TanStack Router/Query, Tailwind v4, shadcn/ui, Zustand)
+frontend/  React 19 SPA (Vite 8, TS, TanStack Router/Query, Tailwind v4, shadcn/base-ui, Zustand)
 docs/      standards/ guides/ plans/ explanations/  — single source of truth, keep in sync
 justfile   task runner — `just --list`
 ```
@@ -55,7 +55,8 @@ The detailed, authoritative conventions live in [.github/copilot-instructions.md
 - Functional components only. Server state → TanStack Query; UI/global state → Zustand (never server data); routing → TanStack Router (file-based in `src/routes/`).
 - All HTTP through `src/api/client.ts` (Axios + JWT interceptor). Query keys centralized in `src/api/queryKeys.ts`.
 - No business logic in components — extract to `src/hooks/`. Use the `@/` import alias. Co-locate tests (`*.test.tsx`).
-- Styling: Tailwind v4 + shadcn/ui (`src/components/ui/`, added via `npx shadcn@latest add`, never hand-edited). Use `cn()` for class merging.
+- Styling: Tailwind v4 (CSS-first, no config file) + shadcn `base-nova` style, built on `@base-ui/react` primitives — NOT Radix (`src/components/ui/`, added via `npx shadcn@latest add`, never hand-edited). Use `cn()` for class merging.
+- Base UI has no `asChild`; compose via the `render` prop (e.g. `<Button render={<Link .../>} />`) or the `useRender` hook. Charts use `echarts` / `echarts-for-react` (lazy-loaded). Tests use Vitest + Testing Library + MSW (`src/test/mocks/`); `src/test/setup.ts` polyfills Web Storage for the current happy-dom/jsdom + Vitest combo.
 
 **Docs & planning**
 - Any feature/endpoint/architecture change updates the relevant `docs/` file in the same change.

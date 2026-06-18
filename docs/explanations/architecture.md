@@ -102,7 +102,7 @@ frontend/
 │   │   ├── __root.tsx     Root layout
 │   │   ├── index.tsx      Home page
 │   │   ├── login.tsx      Login page
-│   │   └── demo.chart.tsx Plotly chart demo
+│   │   └── demo.chart.tsx ECharts chart demo
 │   ├── schemas/           Zod validation schemas (one file per domain)
 │   │   └── auth.ts        Login and register schemas
 │   ├── store/             Zustand global state (one file per concern)
@@ -127,7 +127,7 @@ frontend/
 
 **No business logic in components.** Components render UI. All logic (auth checks, data transformation, API calls) lives in hooks under `src/hooks/`.
 
-**Tailwind CSS v4 + shadcn/ui for styling.** All components use Tailwind utility classes. shadcn/ui components are copied into `src/components/ui/` via `npx shadcn@latest add <component>` and never modified directly. The `cn()` helper in `src/lib/utils.ts` (backed by `clsx` + `tailwind-merge`) handles conditional class merging.
+**Tailwind CSS v4 + shadcn/ui for styling.** All components use Tailwind utility classes. shadcn/ui components are copied into `src/components/ui/` via `npx shadcn@latest add <component>` and never modified directly; this project uses the `base-nova` style built on `@base-ui/react` primitives (not Radix), which has no `asChild` — composition is done via the `render` prop or `useRender` hook. The `cn()` helper in `src/lib/utils.ts` (backed by `clsx` + `tailwind-merge`) handles conditional class merging.
 
 **React Hook Form + Zod for forms.** Form schemas are defined in `src/schemas/` (one file per domain) using Zod. Components use `useForm` with `zodResolver`. shadcn/ui `Form`, `FormField`, `FormItem`, and `FormMessage` primitives wrap the RHF context.
 

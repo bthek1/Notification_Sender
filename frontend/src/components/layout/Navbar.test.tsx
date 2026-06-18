@@ -43,7 +43,7 @@ describe("Navbar", () => {
     useUIStore.setState({ sidebarOpen: true });
     vi.clearAllMocks();
     // Reset useMe to unauthenticated
-    vi.mocked(authHooks.useMe).mockReturnValue({ data: null } as ReturnType<
+    vi.mocked(authHooks.useMe).mockReturnValue({ data: null } as unknown as ReturnType<
       typeof authHooks.useMe
     >);
   });

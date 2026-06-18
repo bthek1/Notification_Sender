@@ -1,6 +1,6 @@
 /**
  * CSS variable token names for the design system.
- * Use getCSSVar() to read resolved values at runtime (e.g. for Plotly chart theming).
+ * Use getCSSVar() to read resolved values at runtime (e.g. for ECharts chart theming).
  */
 export const themeTokens = {
   background: "--background",
