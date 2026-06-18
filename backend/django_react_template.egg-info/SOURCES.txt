@@ -1,0 +1,12 @@
+pyproject.toml
+apps/__init__.py
+core/__init__.py
+core/asgi.py
+core/celery.py
+core/urls.py
+core/wsgi.py
+django_react_template.egg-info/PKG-INFO
+django_react_template.egg-info/SOURCES.txt
+django_react_template.egg-info/dependency_links.txt
+django_react_template.egg-info/requires.txt
+django_react_template.egg-info/top_level.txt
