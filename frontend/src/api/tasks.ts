@@ -1,6 +1,37 @@
-import type { TaskResult, TaskTriggerResponse } from "@/types/tasks";
+import type {
+  PeriodicTask,
+  TaskResult,
+  TaskTriggerResponse,
+} from "@/types/tasks";
 
 import { apiClient } from "./client";
+
+export async function listSchedules(): Promise<PeriodicTask[]> {
+  const { data } = await apiClient.get<PeriodicTask[]>(
+    "/api/tasks/schedules/",
+  );
+  return data;
+}
+
+export async function toggleSchedule(
+  id: number,
+  enabled: boolean,
+): Promise<{ enabled: boolean }> {
+  const { data } = await apiClient.patch<{ enabled: boolean }>(
+    `/api/tasks/schedules/${id}/`,
+    { enabled },
+  );
+  return data;
+}
+
+export async function triggerSchedule(
+  id: number,
+): Promise<TaskTriggerResponse> {
+  const { data } = await apiClient.post<TaskTriggerResponse>(
+    `/api/tasks/schedules/${id}/trigger/`,
+  );
+  return data;
+}
 
 export async function triggerTask(
   payload: Record<string, unknown>,

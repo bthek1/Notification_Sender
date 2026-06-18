@@ -74,7 +74,8 @@ Sources of delay between the scheduled time and the actual run:
 - `core/celery.py` — the Celery app; autodiscovers each app's `tasks.py`.
 - `core/settings/base.py` — the `CELERY_*` config, including `CELERY_BEAT_SCHEDULER`.
 - `docker-compose.yml` — `celery_worker` and `celery_beat` services (beat runs with `--scheduler django_celery_beat.schedulers:DatabaseScheduler`).
-- `apps/notifications/` *(planned)* — the `Notification` / schedule models, the send task, and the API that creates and **re-times** `PeriodicTask`/`ClockedSchedule` rows. See [docs/plans/dynamic-notification-scheduler.md](../plans/dynamic-notification-scheduler.md).
+- `apps/notifications/` — the `Event` model (a point-in-time row with `scheduled_time`/`status`/`fired_at`), the `generate_events` task that seeds future events, and the `fire_events` task that marks events as fired once their time passes. An event's `scheduled_time` can be changed at any moment and `fire_events` (running every minute) still fires it accurately at the new time.
+- `apps/tasks/` — periodic-schedule management: `SCHEDULED_TASKS` (the in-git source of truth), the `sync_scheduled_tasks` command that applies it to `PeriodicTask` rows, and the `/api/tasks/` schedule/result API. See [docs/guides/background-tasks.md](../guides/background-tasks.md).
 
 ## Further reading
 

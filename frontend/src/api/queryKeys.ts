@@ -9,5 +9,6 @@ export const queryKeys = {
   },
   tasks: {
     status: (taskId: string) => ["tasks", taskId] as const,
+    schedules: ["tasks", "schedules"] as const,
   },
 } as const;

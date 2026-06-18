@@ -57,10 +57,17 @@ backend/
 │   │   ├── views.py       Class-based API views
 │   │   └── urls.py
 │   ├── pages/             Infrastructure endpoints
-│   │   ├── views.py       /api/health/ liveness + /api/tasks/ trigger/status/revoke
+│   │   ├── views.py       /api/health/ liveness + ad-hoc task trigger/status/revoke
 │   │   └── tasks.py       Demo Celery tasks (add, process_data)
-│   └── notifications/     [planned] Notification + Schedule models, dynamic scheduler API
-│                          (see docs/plans/dynamic-notification-scheduler.md)
+│   ├── notifications/     Event model + generate_events / fire_events tasks
+│   │   ├── models.py      Event (UUID PK, scheduled_time, status, fired_at)
+│   │   ├── services.py    generate_future_events / fire_due_events
+│   │   ├── tasks.py       generate_events / fire_events Celery tasks
+│   │   └── views.py       /api/notifications/events/ (list, detail, generate)
+│   └── tasks/             Periodic-schedule management (no models of its own)
+│       ├── scheduled_tasks.py   SCHEDULED_TASKS — source of truth, in git
+│       ├── management/commands/sync_scheduled_tasks.py   applies it to the DB
+│       └── views.py       /api/tasks/ schedules + results API
 ├── core/
 │   └── celery.py          Celery app — autodiscovers tasks.py in each app
 ├── manage.py
@@ -78,7 +85,7 @@ backend/
 
 **UUID primary keys.** All models use `UUIDField(default=uuid4)` as the primary key to avoid exposing sequential integer IDs in the API.
 
-**Database-backed scheduling.** Background work runs through Celery. The beat scheduler is configured with `django_celery_beat.schedulers:DatabaseScheduler` (see `CELERY_BEAT_SCHEDULER` in `core/settings/base.py`), so periodic/clocked schedules are stored as rows in PostgreSQL rather than in a static `beat_schedule` dict. This is what makes schedule times **editable at runtime**: writing to a `PeriodicTask` row (directly, via the Django admin, or via the planned scheduler API) changes when a task next fires, with no restart. Task results are persisted via `django-celery-results` (`CELERY_RESULT_BACKEND = "django-db"`) so every run — and its accuracy — is auditable. See [dynamic-scheduling.md](dynamic-scheduling.md).
+**Database-backed scheduling.** Background work runs through Celery. The beat scheduler is configured with `django_celery_beat.schedulers:DatabaseScheduler` (see `CELERY_BEAT_SCHEDULER` in `core/settings/base.py`), so periodic/clocked schedules are stored as rows in PostgreSQL rather than in a static `beat_schedule` dict. This is what makes schedule times **editable at runtime**: writing to a `PeriodicTask` row (directly, via the Django admin, or via the `/api/tasks/schedules/` API) changes when a task next fires, with no restart. Periodic schedules are defined in code in `apps/tasks/scheduled_tasks.py` and applied with the `sync_scheduled_tasks` command (see [background-tasks.md](../guides/background-tasks.md)). Task results are persisted via `django-celery-results` (`CELERY_RESULT_BACKEND = "django-db"`) so every run — and its accuracy — is auditable. See [dynamic-scheduling.md](dynamic-scheduling.md).
 
 ---
 
