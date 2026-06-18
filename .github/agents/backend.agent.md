@@ -36,7 +36,9 @@ backend/
 │   └── wsgi.py
 ├── apps/
 │   ├── accounts/       # CustomUser, JWT auth endpoints
-│   └── pages/          # Health check, static page endpoints
+│   ├── pages/          # Health check, ad-hoc task trigger/status demo
+│   ├── notifications/  # Event model + generate_events / fire_events tasks
+│   └── tasks/          # SCHEDULED_TASKS + sync_scheduled_tasks + schedule/result API (no models)
 ├── conftest.py         # Root pytest fixtures
 ├── manage.py
 └── pyproject.toml
@@ -71,6 +73,12 @@ backend/
 - Always run `just be-makemigrations` after model changes
 - Never delete migration files
 - Migrations live in `apps/<appname>/migrations/`
+
+**Background tasks (Celery):**
+- Tasks are `@shared_task` functions in each app's `tasks.py` (auto-discovered by `core/celery.py`)
+- Periodic schedules use `django-celery-beat`'s `DatabaseScheduler` (DB rows) — never a static `beat_schedule` dict
+- Declare periodic tasks in `apps/tasks/scheduled_tasks.py` (`SCHEDULED_TASKS`); apply with `just be-sync-tasks` (the `sync_scheduled_tasks` command). Never hand-edit managed `PeriodicTask` rows — the next sync overwrites/prunes them
+- Runtime control/inspection: `/api/tasks/schedules/` and `/api/tasks/results/`. Full guide: `docs/guides/background-tasks.md`
 
 **Settings:**
 ```python
