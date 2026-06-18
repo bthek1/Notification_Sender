@@ -42,8 +42,24 @@ describe("EventsTable", () => {
     expect(screen.getByText("fired")).toBeInTheDocument();
   });
 
-  it("shows a dash for the fired column when not yet fired", () => {
+  it("shows a dash in the fired and delay columns when not yet fired", () => {
     render(<EventsTable events={[makeEvent({ fired_at: null })]} />);
-    expect(screen.getByText("—")).toBeInTheDocument();
+    // Both the Fired and Delay columns render a placeholder dash.
+    expect(screen.getAllByText("—")).toHaveLength(2);
+  });
+
+  it("shows the firing delay when an event has fired", () => {
+    render(
+      <EventsTable
+        events={[
+          makeEvent({
+            status: "fired",
+            scheduled_time: "2026-06-18T05:24:00.000Z",
+            fired_at: "2026-06-18T05:24:03.210Z",
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByText("+3.21s")).toBeInTheDocument();
   });
 });

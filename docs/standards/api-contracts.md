@@ -216,7 +216,7 @@ List all periodic tasks with their interval/crontab timing.
     "name": "notifications-fire-events",
     "task": "apps.notifications.tasks.fire_events",
     "enabled": true,
-    "schedule": { "type": "interval", "every": 1, "period": "minutes" },
+    "schedule": { "type": "interval", "every": 5, "period": "minutes" },
     "args": "[]",
     "kwargs": "{}",
     "last_run_at": "2026-06-18T05:20:00Z",

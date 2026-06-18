@@ -11,8 +11,11 @@ interface EChartsChartProps {
 }
 
 /**
- * Thin wrapper around echarts-for-react. The chart auto-resizes to its
- * container; size it via `className` / `style` on the wrapping element.
+ * Thin wrapper around echarts-for-react. Size it via `className` / `style`:
+ * those land on an outer box and the chart fills it. The chart canvas needs an
+ * explicitly-sized parent — applying `height: 100%` directly to the ECharts root
+ * (its old behaviour) let an inline height override sizing classes like `h-80`
+ * and collapsed the chart to ECharts' ~100px default.
  */
 export default function EChartsChart({
   option,
@@ -21,12 +24,13 @@ export default function EChartsChart({
   notMerge = true,
 }: EChartsChartProps) {
   return (
-    <ReactECharts
-      option={option}
-      notMerge={notMerge}
-      lazyUpdate
-      className={className}
-      style={{ height: "100%", width: "100%", ...style }}
-    />
+    <div className={className} style={style}>
+      <ReactECharts
+        option={option}
+        notMerge={notMerge}
+        lazyUpdate
+        style={{ height: "100%", width: "100%" }}
+      />
+    </div>
   );
 }

@@ -1,3 +1,4 @@
+import random
 from datetime import timedelta
 from itertools import pairwise
 
@@ -23,12 +24,21 @@ class TestGenerateFutureEvents:
         for event in Event.objects.all():
             assert now < event.scheduled_time <= now + timedelta(minutes=20, seconds=1)
 
-    def test_events_are_evenly_spaced(self):
-        events = generate_future_events(count=4, within_minutes=20)
+    def test_events_returned_in_chronological_order(self):
+        events = generate_future_events(count=10, within_minutes=20)
+        times = [e.scheduled_time for e in events]
+        assert times == sorted(times)
+
+    def test_events_are_randomly_spaced(self):
+        # Seed the RNG so the scatter is deterministic for assertion. With random
+        # offsets the gaps between consecutive events should differ — unlike the
+        # old evenly-spaced behaviour where every gap was identical.
+        random.seed(1234)
+        events = generate_future_events(count=8, within_minutes=20)
         times = sorted(e.scheduled_time for e in events)
-        gaps = [(b - a).total_seconds() for a, b in pairwise(times)]
-        # 20 min / 4 = 5 min spacing; allow small float tolerance.
-        assert all(abs(gap - 300) < 1 for gap in gaps)
+        gaps = [round((b - a).total_seconds(), 6) for a, b in pairwise(times)]
+        # Not all gaps equal -> events are not evenly spaced.
+        assert len(set(gaps)) > 1
 
     def test_all_events_start_pending(self):
         generate_future_events(count=3, within_minutes=10)

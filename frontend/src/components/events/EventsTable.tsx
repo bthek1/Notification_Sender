@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { formatDateTime, formatRelative } from "@/lib/date";
+import { delayMs, formatDelay, formatTimePrecise } from "@/lib/date";
 import type { NotificationEvent } from "@/types/events";
 
 interface EventsTableProps {
@@ -36,26 +36,42 @@ export function EventsTable({ events }: EventsTableProps) {
         <thead className="text-xs text-muted-foreground">
           <tr className="border-b">
             <th className="px-3 py-2 font-medium">Title</th>
-            <th className="px-3 py-2 font-medium">Scheduled</th>
             <th className="px-3 py-2 font-medium">Status</th>
+            <th className="px-3 py-2 font-medium">Scheduled</th>
             <th className="px-3 py-2 font-medium">Fired</th>
+            <th className="px-3 py-2 text-right font-medium">Delay</th>
           </tr>
         </thead>
         <tbody>
-          {events.map((event) => (
-            <tr key={event.id} className="border-b last:border-0">
-              <td className="px-3 py-2 font-medium">{event.title}</td>
-              <td className="px-3 py-2 text-muted-foreground">
-                {formatDateTime(event.scheduled_time)}
-              </td>
-              <td className="px-3 py-2">
-                <StatusBadge status={event.status} />
-              </td>
-              <td className="px-3 py-2 text-muted-foreground">
-                {event.fired_at ? formatRelative(event.fired_at) : "—"}
-              </td>
-            </tr>
-          ))}
+          {events.map((event) => {
+            const delay = delayMs(event.scheduled_time, event.fired_at);
+            return (
+              <tr key={event.id} className="border-b last:border-0">
+                <td className="px-3 py-2 font-medium">{event.title}</td>
+                <td className="px-3 py-2">
+                  <StatusBadge status={event.status} />
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                  {formatTimePrecise(event.scheduled_time)}
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                  {event.fired_at ? formatTimePrecise(event.fired_at) : "—"}
+                </td>
+                <td
+                  className={cn(
+                    "px-3 py-2 text-right font-mono text-xs",
+                    delay === null
+                      ? "text-muted-foreground"
+                      : delay > 0
+                        ? "text-amber-600 dark:text-amber-400"
+                        : "text-green-600 dark:text-green-400",
+                  )}
+                >
+                  {formatDelay(event.scheduled_time, event.fired_at)}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>

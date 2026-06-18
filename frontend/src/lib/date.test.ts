@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { formatDate, formatDateTime, formatRelative } from './date'
+import {
+  delayMs,
+  formatDate,
+  formatDateTime,
+  formatDelay,
+  formatRelative,
+  formatTimePrecise,
+} from './date'
 
 describe('formatDate', () => {
   it('returns empty string for null', () => {
@@ -61,5 +68,64 @@ describe('formatRelative', () => {
   it('accepts an ISO string', () => {
     const result = formatRelative('2020-01-01T00:00:00Z')
     expect(result).toMatch(/ago|years/)
+  })
+})
+
+describe('formatTimePrecise', () => {
+  it('returns empty string for null', () => {
+    expect(formatTimePrecise(null)).toBe('')
+  })
+
+  it('renders the time down to the millisecond', () => {
+    expect(formatTimePrecise(new Date(2024, 5, 15, 14, 3, 27, 481))).toBe(
+      '14:03:27.481',
+    )
+  })
+})
+
+describe('delayMs', () => {
+  it('returns null when either timestamp is missing', () => {
+    expect(delayMs('2026-06-18T05:24:00Z', null)).toBeNull()
+    expect(delayMs(null, '2026-06-18T05:24:00Z')).toBeNull()
+  })
+
+  it('returns null for invalid timestamps', () => {
+    expect(delayMs('bad', 'also-bad')).toBeNull()
+  })
+
+  it('returns a positive delay when fired after scheduled', () => {
+    expect(
+      delayMs('2026-06-18T05:24:00.000Z', '2026-06-18T05:24:03.210Z'),
+    ).toBe(3210)
+  })
+
+  it('returns a negative delay when fired before scheduled', () => {
+    expect(
+      delayMs('2026-06-18T05:24:00.500Z', '2026-06-18T05:24:00.380Z'),
+    ).toBe(-120)
+  })
+})
+
+describe('formatDelay', () => {
+  it('returns a dash when not yet fired', () => {
+    expect(formatDelay('2026-06-18T05:24:00Z', null)).toBe('—')
+  })
+
+  it('formats sub-second delays in milliseconds', () => {
+    expect(
+      formatDelay('2026-06-18T05:24:00.000Z', '2026-06-18T05:24:00.482Z'),
+    ).toBe('+482ms')
+  })
+
+  it('formats larger delays in seconds', () => {
+    expect(
+      formatDelay('2026-06-18T05:24:00.000Z', '2026-06-18T05:24:03.210Z'),
+    ).toBe('+3.21s')
+  })
+
+  it('uses a minus sign for early fires', () => {
+    expect(
+      formatDelay('2026-06-18T05:24:00.500Z', '2026-06-18T05:24:00.380Z'),
+    ).toBe('−120ms')
   })
 })

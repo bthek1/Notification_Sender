@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { EventsChart } from "@/components/events/EventsChart";
+import { DelayChart } from "@/components/events/DelayChart";
 import { EventsTable } from "@/components/events/EventsTable";
 import { useEvents, useGenerateEvents } from "@/hooks/useEvents";
 
@@ -68,6 +69,30 @@ function EventsPage() {
             </p>
           ) : (
             <EventsChart events={events} />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Firing delay</CardTitle>
+          <CardDescription>
+            How late each event fired (fired time − scheduled time), in seconds.
+            Bars are green under 1s, amber under 3s, red beyond; the dashed line
+            marks the average.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isError ? (
+            <p className="py-8 text-center text-sm text-destructive">
+              Failed to load events.
+            </p>
+          ) : isPending ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              Loading events…
+            </p>
+          ) : (
+            <DelayChart events={events} />
           )}
         </CardContent>
       </Card>

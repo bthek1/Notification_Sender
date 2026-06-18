@@ -35,7 +35,9 @@ frontend/src/
 ├── api/            # Axios client, endpoint functions, queryKeys
 ├── components/
 │   ├── ui/         # shadcn/ui copy-paste components (never modify directly)
-│   └── charts/     # EChartsChart wrapper (always lazy-loaded)
+│   ├── charts/     # EChartsChart wrapper (always lazy-loaded)
+│   ├── layout/     # App shell: AppLayout, Navbar, Sidebar, navItems
+│   └── <domain>/   # Feature components, one folder per domain (events/, tasks/, home/)
 ├── hooks/          # Custom hooks with business logic
 ├── lib/            # cn(), date wrappers
 ├── routes/         # TanStack Router file-based routes
@@ -129,8 +131,8 @@ const form = useForm<LoginSchema>({ resolver: zodResolver(loginSchema) })
 
 ## Testing — Vitest + React Testing Library
 - Run: `just fe-test` or `cd frontend && npm test`
-- Test environment: `jsdom` (configured in `vite.config.ts`)
-- Setup file: `src/test/setup.ts` (imports `@testing-library/jest-dom`)
+- Test environment: `happy-dom` (configured in `vite.config.ts`)
+- Setup file: `src/test/setup.ts` (jest-dom matchers + Web Storage polyfill); MSW handlers in `src/test/mocks/`
 - Co-locate tests with the component/hook they test
 - Mock Axios at the module level — never make real HTTP calls in tests
 - Zod schemas are tested as pure unit tests (no DOM)

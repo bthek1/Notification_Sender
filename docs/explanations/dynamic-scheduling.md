@@ -65,7 +65,7 @@ Sources of delay between the scheduled time and the actual run:
 2. **Broker + worker pickup** — enqueue → a free worker picks it up. Usually milliseconds; longer if all workers are busy (note `CELERY_WORKER_PREFETCH_MULTIPLIER = 1` and `CELERY_TASK_ACKS_LATE = True` in settings keep long tasks from starving short ones).
 3. **Clock/timezone** — `CELERY_TIMEZONE` follows Django's `TIME_ZONE`. Always store and compare timezone-aware datetimes; `ClockedSchedule` is UTC-based internally.
 
-**How we measure it:** the send task records both the *scheduled* time (passed in, or read from the schedule) and the *actual* time (`timezone.now()` at execution) into a `NotificationLog` row, plus the delta. `django-celery-results` separately records each run's timing. Comparing the two over many runs is the actual experiment this repo exists to run.
+**How we measure it:** each `Event` row carries its *scheduled* time (`scheduled_time`) and, once `fire_events` processes it, its *actual* fire time (`fired_at`, set to `timezone.now()` at execution). The delta between the two is the accuracy of a single event. `django-celery-results` separately records each task run's timing. Comparing these over many events is the actual experiment this repo exists to run. (A dedicated `NotificationLog` table is noted as out of scope for now — see the [plan](../plans/dynamic-notification-scheduler.md).)
 
 > **Tuning note:** if you need tighter-than-tick accuracy, lower beat's max loop interval — at the cost of more frequent DB reads. There is a floor: this is a *polling* scheduler, not an interrupt. Sub-second precision is out of scope for django-celery-beat.
 
@@ -74,7 +74,7 @@ Sources of delay between the scheduled time and the actual run:
 - `core/celery.py` — the Celery app; autodiscovers each app's `tasks.py`.
 - `core/settings/base.py` — the `CELERY_*` config, including `CELERY_BEAT_SCHEDULER`.
 - `docker-compose.yml` — `celery_worker` and `celery_beat` services (beat runs with `--scheduler django_celery_beat.schedulers:DatabaseScheduler`).
-- `apps/notifications/` — the `Event` model (a point-in-time row with `scheduled_time`/`status`/`fired_at`), the `generate_events` task that seeds future events, and the `fire_events` task that marks events as fired once their time passes. An event's `scheduled_time` can be changed at any moment and `fire_events` (running every minute) still fires it accurately at the new time.
+- `apps/notifications/` — the `Event` model (a point-in-time row with `scheduled_time`/`status`/`fired_at`), the `generate_events` task that seeds future events, and the `fire_events` task that marks events as fired once their time passes. An event's `scheduled_time` can be changed at any moment and `fire_events` (running every 5 minutes — tune the interval in `apps/tasks/scheduled_tasks.py`) still fires it accurately at the new time, bounded by that interval.
 - `apps/tasks/` — periodic-schedule management: `SCHEDULED_TASKS` (the in-git source of truth), the `sync_scheduled_tasks` command that applies it to `PeriodicTask` rows, and the `/api/tasks/` schedule/result API. See [docs/guides/background-tasks.md](../guides/background-tasks.md).
 
 ## Further reading

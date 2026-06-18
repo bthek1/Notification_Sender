@@ -58,7 +58,7 @@ maps to exactly one `PeriodicTask` row. Two schedule shapes are supported.
     "name": "notifications-fire-events",            # unique identifier (also the DB row name)
     "task": "apps.notifications.tasks.fire_events",  # dotted path to the @shared_task
     "schedule_type": "interval",
-    "every": 1,
+    "every": 5,
     "period": "minutes",                            # seconds | minutes | hours | days
     "enabled": True,
 }
@@ -126,11 +126,12 @@ as Celery `@shared_task` functions.
 | Task | Schedule | What it does |
 |---|---|---|
 | `generate_events` | every 20 min, `count=5, within_minutes=20` | Creates 5 pending `Event` rows spread across the next 20 minutes |
-| `fire_events` | every 1 min | Marks every pending `Event` whose `scheduled_time` has passed as `fired` (records scheduled vs. actual fire time) |
+| `fire_events` | every 5 min | Marks every pending `Event` whose `scheduled_time` has passed as `fired` and stamps `fired_at` (so scheduled vs. actual fire time can be compared) |
 
-`fire_events` running once a minute is what gives the harness its accuracy: an
-event's `scheduled_time` can be changed at any moment and it still fires within a
-minute of the new time, with no restart.
+`fire_events` running on a fixed interval is what gives the harness its accuracy:
+an event's `scheduled_time` can be changed at any moment and it still fires within
+one interval (5 min by default — lower it for tighter accuracy) of the new time,
+with no restart.
 
 ## Inspecting and controlling tasks at runtime
 

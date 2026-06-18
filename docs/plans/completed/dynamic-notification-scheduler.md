@@ -50,7 +50,7 @@ Conceptual background: [docs/explanations/dynamic-scheduling.md](../explanations
 
 - [x] `scheduled_tasks.py` — `SCHEDULED_TASKS` source of truth (interval/crontab,
   optional args/kwargs); seeded with `generate_events` (every 20 min) and
-  `fire_events` (every 1 min)
+  `fire_events` (every 5 min)
 - [x] `sync_scheduled_tasks` management command — upserts `PeriodicTask` rows
   keyed on `name`, prunes unmanaged rows (preserves `celery.backend_cleanup`),
   supports `--dry-run`
@@ -69,10 +69,10 @@ Conceptual background: [docs/explanations/dynamic-scheduling.md](../explanations
 ## How dynamic re-timing works
 
 An event's `scheduled_time` is a plain DB column, editable at any time (admin,
-shell, or a future PATCH endpoint). Because `fire_events` runs once a minute and
-selects `status=pending, scheduled_time <= now`, changing an event's time
-re-times when it fires — accurate to within the tick, no restart. The harness can
-compare `scheduled_time` vs. `fired_at` to measure accuracy.
+shell, or a future PATCH endpoint). Because `fire_events` runs once every five
+minutes and selects `status=pending, scheduled_time <= now`, changing an event's
+time re-times when it fires — accurate to within the interval, no restart. The
+harness can compare `scheduled_time` vs. `fired_at` to measure accuracy.
 
 ## Testing
 
@@ -83,7 +83,7 @@ compare `scheduled_time` vs. `fired_at` to measure accuracy.
 ## Risks & Notes
 
 - **Polling floor.** Accuracy is bounded by beat's tick and the `fire_events`
-  interval (1 min here). Sub-second precision is out of scope for a polling
+  interval (5 min here). Sub-second precision is out of scope for a polling
   scheduler — lower the interval for tighter accuracy at the cost of more DB reads.
 - **Managed rows are authoritative.** Hand-edited `PeriodicTask` rows for managed
   tasks are overwritten/pruned on the next `sync_scheduled_tasks`. Toggling

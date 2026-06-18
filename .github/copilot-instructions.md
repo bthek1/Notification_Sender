@@ -179,8 +179,8 @@ export const Route = createFileRoute('/users/$userId')({
 
 **Testing — Vitest + React Testing Library:**
 - Run with `just fe-test` or `cd frontend && npm test`
-- Test environment: `jsdom` (configured in `vite.config.ts`)
-- Setup file: `src/test/setup.ts` (imports `@testing-library/jest-dom`)
+- Test environment: `happy-dom` (configured in `vite.config.ts`)
+- Setup file: `src/test/setup.ts` (jest-dom matchers + Web Storage polyfill); MSW handlers in `src/test/mocks/`
 - Co-locate tests with the component/hook they test: `Button.test.tsx` next to `Button.tsx`
 - Mock Axios at the module level — never make real HTTP calls in tests
 - Zod schemas are tested as pure unit tests (no DOM)
@@ -252,7 +252,9 @@ Key commands:
 │   │   ├── api/               # Axios client, endpoint functions, queryKeys
 │   │   ├── components/
 │   │   │   ├── ui/            # shadcn/ui copy-paste components
-│   │   │   └── charts/        # EChartsChart wrapper (lazy-loaded)
+│   │   │   ├── charts/        # EChartsChart wrapper (lazy-loaded)
+│   │   │   ├── layout/        # App shell: AppLayout, Navbar, Sidebar
+│   │   │   └── <domain>/      # Feature components per domain (events/, tasks/, home/)
 │   │   ├── hooks/             # Custom hooks (business logic)
 │   │   ├── lib/               # Shared utilities: cn(), date wrappers
 │   │   ├── routes/            # TanStack Router file-based routes

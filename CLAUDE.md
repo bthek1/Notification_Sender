@@ -6,7 +6,7 @@ Guidance for AI coding agents (Claude Code and others) working in this repositor
 
 **Notification Sender** is a test harness for **accurate background task execution at dynamic, user-changeable times**. The central problem it explores: schedule a notification to fire at time T, let a user change T at any moment, and still have the task fire accurately at the new time — with no process restart.
 
-The mechanism is **Celery + django-celery-beat's `DatabaseScheduler`**: schedules live in PostgreSQL and beat re-reads them continuously, so they are mutable at runtime. The "send" action in this harness is intentionally simple — it writes a **log line + a `NotificationLog` DB row** (recording scheduled vs. actual fire time) rather than hitting a real channel.
+The mechanism is **Celery + django-celery-beat's `DatabaseScheduler`**: schedules live in PostgreSQL and beat re-reads them continuously, so they are mutable at runtime. The "send" action in this harness is intentionally simple — the `fire_events` task flips an `Event` row's `status` to `fired` and stamps `fired_at` (plus a log line), so accuracy can be read off `scheduled_time` vs. `fired_at`, rather than hitting a real channel. A React SPA surfaces this: an **Events** page (timeline chart + table, generate-on-demand) and a **Scheduled tasks** page (toggle/trigger the periodic schedules).
 
 - **Design spec:** [docs/plans/dynamic-notification-scheduler.md](docs/plans/dynamic-notification-scheduler.md)
 - **Concept explainer:** [docs/explanations/dynamic-scheduling.md](docs/explanations/dynamic-scheduling.md)

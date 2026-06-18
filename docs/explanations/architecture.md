@@ -97,28 +97,46 @@ frontend/
 │   ├── api/
 │   │   ├── client.ts      Axios instance — base URL, JWT interceptor
 │   │   ├── auth.ts        Auth API call functions
+│   │   ├── health.ts      /api/health/ liveness call
+│   │   ├── events.ts      Notifications: list + generate events
+│   │   ├── tasks.ts       Periodic schedules + ad-hoc task status
 │   │   └── queryKeys.ts   Centralised TanStack Query key constants
 │   ├── components/        Shared / reusable UI components
-│   │   └── ui/            shadcn/ui copy-paste components (Button, Input, Form, Card…)
+│   │   ├── ui/            shadcn/ui copy-paste components (Button, Input, Card, ThemeToggle…)
+│   │   ├── charts/        EChartsChart wrapper (lazy-loaded, takes an `option`)
+│   │   ├── layout/        App shell: AppLayout, Navbar, Sidebar, navItems
+│   │   ├── home/          HeroBanner (public landing)
+│   │   ├── events/        EventsChart (timeline), EventsTable
+│   │   ├── tasks/         SchedulesTable (toggle/trigger periodic tasks)
+│   │   └── TaskTrigger.tsx  Ad-hoc task trigger + status poller demo
 │   ├── hooks/             Custom hooks encapsulating business logic
-│   │   └── useAuth.ts     Auth state, login, logout
+│   │   ├── useAuth.ts     Auth state, login, logout, current user
+│   │   ├── useEvents.ts   List events + generate-events mutation
+│   │   ├── useSchedules.ts  List + toggle/trigger periodic schedules
+│   │   ├── useTaskPoller.ts Polls a Celery task id until terminal
+│   │   └── useTheme.ts    Applies light/dark/system theme from the UI store
 │   ├── lib/
 │   │   ├── utils.ts       cn() helper (clsx + tailwind-merge)
 │   │   └── date.ts        date-fns wrappers (formatDate, formatRelative)
 │   ├── routes/            TanStack Router file-based routes
-│   │   ├── __root.tsx     Root layout
-│   │   ├── index.tsx      Home page
+│   │   ├── __root.tsx     Root: app shell for app routes, bare Outlet for public ones
+│   │   ├── index.tsx      Public landing (HeroBanner); redirects signed-in users
 │   │   ├── login.tsx      Login page
-│   │   └── demo.chart.tsx ECharts chart demo
+│   │   ├── signup.tsx     Registration page
+│   │   ├── demo.chart.tsx Dashboard / ECharts chart demo
+│   │   ├── events.tsx     Events page (timeline chart + table + generate)
+│   │   └── schedules.tsx  Scheduled tasks page (periodic schedule control)
 │   ├── schemas/           Zod validation schemas (one file per domain)
 │   │   └── auth.ts        Login and register schemas
 │   ├── store/             Zustand global state (one file per concern)
-│   │   ├── ui.ts          UI flags (sidebar, modals)
+│   │   ├── ui.ts          UI flags (sidebar open, theme)
 │   │   └── auth.ts        Client-side auth flags
 │   ├── test/
-│   │   └── setup.ts       Vitest setup (imports @testing-library/jest-dom)
+│   │   └── setup.ts       Vitest setup (jest-dom + Web Storage polyfill); MSW in test/mocks/
 │   ├── types/
-│   │   └── auth.ts        TypeScript types matching API contracts
+│   │   ├── auth.ts        Auth types matching API contracts
+│   │   ├── events.ts      NotificationEvent + generate payload/response
+│   │   └── tasks.ts       Schedule + task-result/status types
 │   └── main.tsx           App entry point (QueryClient, RouterProvider)
 ├── vite.config.ts
 └── package.json
@@ -126,7 +144,9 @@ frontend/
 
 ### Key design decisions
 
-**TanStack Router for routing.** Routes are file-based under `src/routes/`. The router generates a fully type-safe route tree. Route loaders prefetch data via the QueryClient before the component renders.
+**TanStack Router for routing.** Routes are file-based under `src/routes/`. The router generates a fully type-safe route tree. Route loaders prefetch data via the QueryClient before the component renders. The root route splits two shells: public paths (`/`, `/login`, `/signup`) render a bare `Outlet`, while every other route is wrapped in `AppLayout` (Navbar + Sidebar driven by `navItems`).
+
+**Feature pages mirror the backend domains.** The two domain pages are the UI over the scheduling harness: `/events` lists `Event` rows as a status-split timeline chart and table and can dispatch `generate_events` on demand; `/schedules` lists the periodic `PeriodicTask` rows and can toggle or trigger them. All their data flows through `useEvents` / `useSchedules` hooks over TanStack Query — never local state.
 
 **TanStack Query for server state.** All data fetched from the API lives in the Query cache. Components never manage async loading/error state manually — they call `useQuery` or `useMutation`.
 
@@ -140,7 +160,7 @@ frontend/
 
 **Zustand for global UI state.** Lightweight slices in `src/store/` (one file per concern) hold UI flags that don't belong in TanStack Query (e.g. sidebar open/close, logout-in-progress). The `immer` middleware is used for all mutations. Server-fetched data stays in TanStack Query — never in Zustand.
 
-**Vitest + React Testing Library for tests.** Tests run in a `jsdom` environment configured in `vite.config.ts`. Test files are co-located with the source file they test (e.g. `useAuth.test.tsx` next to `useAuth.ts`).
+**Vitest + React Testing Library for tests.** Tests run in a `happy-dom` environment configured in `vite.config.ts`, with `src/test/setup.ts` loading jest-dom matchers and a Web Storage polyfill. API calls are mocked with MSW handlers under `src/test/mocks/`. Test files are co-located with the source file they test (e.g. `useAuth.test.tsx` next to `useAuth.ts`).
 
 ---
 

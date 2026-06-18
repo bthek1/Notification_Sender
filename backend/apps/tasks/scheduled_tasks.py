@@ -47,7 +47,7 @@ SCHEDULED_TASKS = [
         "name": "notifications-fire-events",
         "task": "apps.notifications.tasks.fire_events",
         "schedule_type": "interval",
-        "every": 1,
+        "every": 5,
         "period": "minutes",
         "enabled": True,
     },
