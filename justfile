@@ -149,8 +149,9 @@ celery-up:
     #!/usr/bin/env bash
     _redis_up=$(docker compose ps --status running redis | grep -c redis || true)
     _worker_up=$(docker compose ps --status running celery_worker | grep -c celery_worker || true)
-    if [[ "$_redis_up" -gt 0 && "$_worker_up" -gt 0 ]]; then
-        echo "Redis + Celery worker already running."
+    _beat_up=$(docker compose ps --status running celery_beat | grep -c celery_beat || true)
+    if [[ "$_redis_up" -gt 0 && "$_worker_up" -gt 0 && "$_beat_up" -gt 0 ]]; then
+        echo "Redis + Celery worker + beat already running."
     else
         echo "Starting Redis + Celery worker + beat..."
         docker compose up -d redis celery_worker celery_beat

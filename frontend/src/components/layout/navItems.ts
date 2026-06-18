@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { BarChart2 } from "lucide-react";
+import { BarChart2, CalendarClock } from "lucide-react";
 
 export interface NavItem {
   label: string;
@@ -9,4 +9,5 @@ export interface NavItem {
 
 export const navItems: NavItem[] = [
   { label: "Dashboard", to: "/demo/chart", icon: BarChart2 },
+  { label: "Events", to: "/events", icon: CalendarClock },
 ];

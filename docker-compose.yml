@@ -51,7 +51,8 @@ services:
     environment:
       DATABASE_URL: postgres://appuser:apppassword@db:5432/appdb
       CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      # Result backend intentionally NOT set here — base.py uses "django-db"
+      # so task results persist to Postgres (queryable, survives restarts).
 
   celery_beat:
     build: ./backend
@@ -67,7 +68,7 @@ services:
     environment:
       DATABASE_URL: postgres://appuser:apppassword@db:5432/appdb
       CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      # Result backend intentionally NOT set here — base.py uses "django-db".
 
   frontend:
     build: ./frontend

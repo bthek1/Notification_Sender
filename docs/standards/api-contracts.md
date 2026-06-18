@@ -126,6 +126,75 @@ Update the authenticated user's profile fields.
 
 ---
 
+## Notifications
+
+An `Event` is a point-in-time record scheduled to occur at `scheduled_time`. Events
+start `pending` and are marked `fired` once their scheduled time passes (see the
+`fire_events` Celery task). Events are usually created ahead of time by the
+`generate_events` background task.
+
+### `GET /api/notifications/events/`
+
+List all events, ordered by `scheduled_time` (soonest first).
+
+**Auth:** Public (harness/demo)
+
+**Response `200`:**
+```json
+[
+  {
+    "id": "<uuid>",
+    "title": "Generated event 1",
+    "message": "Auto-generated event firing within 20 minutes.",
+    "scheduled_time": "2026-06-18T05:24:00Z",
+    "status": "pending",
+    "fired_at": null,
+    "created_at": "2026-06-18T05:20:00Z",
+    "updated_at": "2026-06-18T05:20:00Z"
+  }
+]
+```
+
+---
+
+### `GET /api/notifications/events/{id}/`
+
+Retrieve a single event by UUID.
+
+**Auth:** Public (harness/demo)
+
+**Response `200`:** A single event object (same shape as the list items above).
+
+**Errors:** `404` — no event with that id
+
+---
+
+### `POST /api/notifications/events/generate/`
+
+Dispatch the `generate_events` Celery task, which creates `count` pending events
+spread evenly across the next `within_minutes` minutes (default: 5 events / 20 min).
+
+**Auth:** Public (harness/demo)
+
+**Request body** (all fields optional):
+```json
+{
+  "count": 5,
+  "within_minutes": 20
+}
+```
+
+**Response `202`:**
+```json
+{
+  "task_id": "<celery_task_id>"
+}
+```
+
+**Errors:** `400` — `count` outside 1–100 or `within_minutes` outside 1–1440
+
+---
+
 ## Health
 
 ### `GET /api/health/`
