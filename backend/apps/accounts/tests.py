@@ -1,5 +1,6 @@
 import pytest
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from rest_framework.test import APIClient
 
 from apps.accounts.forms import CustomUserChangeForm, CustomUserCreationForm
@@ -31,17 +32,19 @@ class TestCustomUserModel:
         assert str(user) == "c@example.com"
 
     def test_create_superuser(self):
-        admin = User.objects.create_superuser(email="admin@example.com", password="adminpass")
+        admin = User.objects.create_superuser(
+            email="admin@example.com", password="adminpass"
+        )
         assert admin.is_staff
         assert admin.is_superuser
 
     def test_duplicate_email_raises(self):
         User.objects.create_user(email="dup@example.com", password="pass1234")
-        with pytest.raises(Exception):
+        with pytest.raises(IntegrityError):
             User.objects.create_user(email="dup@example.com", password="other1234")
 
     def test_create_user_missing_email_raises(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Email must be set"):
             User.objects.create_user(email="", password="pass1234")
 
 

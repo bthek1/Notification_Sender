@@ -195,6 +195,117 @@ spread evenly across the next `within_minutes` minutes (default: 5 events / 20 m
 
 ---
 
+## Background Tasks
+
+Runtime inspection and control of the periodic Celery Beat schedule. Schedules
+are defined in code (`apps/tasks/scheduled_tasks.py`) and applied with
+`sync_scheduled_tasks` — see
+[docs/guides/background-tasks.md](../guides/background-tasks.md).
+
+### `GET /api/tasks/schedules/`
+
+List all periodic tasks with their interval/crontab timing.
+
+**Auth:** Bearer token required
+
+**Response `200`:**
+```json
+[
+  {
+    "id": 1,
+    "name": "notifications-fire-events",
+    "task": "apps.notifications.tasks.fire_events",
+    "enabled": true,
+    "schedule": { "type": "interval", "every": 1, "period": "minutes" },
+    "args": "[]",
+    "kwargs": "{}",
+    "last_run_at": "2026-06-18T05:20:00Z",
+    "total_run_count": 42,
+    "date_changed": "2026-06-18T05:00:00Z"
+  }
+]
+```
+
+`schedule` is `{"type": "crontab", "minute", "hour", "day_of_week",
+"day_of_month", "month_of_year"}` for crontab-scheduled tasks, or `null` if
+neither is set.
+
+---
+
+### `PATCH /api/tasks/schedules/{id}/`
+
+Enable or disable a periodic task.
+
+**Auth:** Bearer token required
+
+**Request body:**
+```json
+{ "enabled": false }
+```
+
+**Response `200`:** `{ "enabled": false }`
+
+**Errors:** `404` — no task with that id
+
+> Note: `sync_scheduled_tasks` resets `enabled` to the value in
+> `scheduled_tasks.py` on its next run.
+
+---
+
+### `POST /api/tasks/schedules/{id}/trigger/`
+
+Fire a periodic task immediately (out of band from its schedule), using the
+task's stored `args`/`kwargs`.
+
+**Auth:** Bearer token required
+
+**Response `202`:**
+```json
+{ "task_id": "<celery_task_id>" }
+```
+
+**Errors:** `404` — no task with that id
+
+---
+
+### `GET /api/tasks/results/`
+
+List recent task run results, newest first.
+
+**Auth:** Bearer token required
+
+**Query params:** `status` (optional) — filter by Celery state, e.g. `SUCCESS`,
+`FAILURE`.
+
+**Response `200`:**
+```json
+[
+  {
+    "task_id": "<celery_task_id>",
+    "task_name": "apps.notifications.tasks.fire_events",
+    "status": "SUCCESS",
+    "result": "3",
+    "date_created": "2026-06-18T05:20:00Z",
+    "date_done": "2026-06-18T05:20:01Z",
+    "traceback": null
+  }
+]
+```
+
+---
+
+### `GET /api/tasks/results/{task_id}/`
+
+Retrieve a single task run result by Celery task id.
+
+**Auth:** Bearer token required
+
+**Response `200`:** A single result object (same shape as the list items above).
+
+**Errors:** `404` — no result for that task id
+
+---
+
 ## Health
 
 ### `GET /api/health/`

@@ -43,7 +43,7 @@ class Command(BaseCommand):
             help="Print the changes that would be made without writing to the DB.",
         )
 
-    def handle(self, *args: Any, **options: Any) -> None:
+    def handle(self, *args: Any, **options: Any) -> None:  # noqa: ARG002
         dry_run: bool = options["dry_run"]
         prefix = "[dry-run] would " if dry_run else ""
 
@@ -105,9 +105,7 @@ class Command(BaseCommand):
         if task_args is not None:
             defaults["args"] = json.dumps(task_args)
 
-        _, created = PeriodicTask.objects.update_or_create(
-            name=name, defaults=defaults
-        )
+        _, created = PeriodicTask.objects.update_or_create(name=name, defaults=defaults)
         self.stdout.write(f"{'created' if created else 'updated'}: {name}")
 
     def _resolve_interval(
@@ -143,5 +141,7 @@ class Command(BaseCommand):
 
     def _require(self, spec: dict[str, Any], key: str) -> Any:
         if key not in spec:
-            raise CommandError(f"scheduled task spec missing required key {key!r}: {spec}")
+            raise CommandError(
+                f"scheduled task spec missing required key {key!r}: {spec}"
+            )
         return spec[key]

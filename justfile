@@ -55,12 +55,16 @@ be-install:
     cd backend && uv sync --group dev
 
 # Run the Django dev server locally
-be-dev: be-makemigrations be-migrate
+be-dev: be-makemigrations be-migrate be-sync-tasks
     cd backend && uv run python manage.py runserver 0.0.0.0:8005
 
 # Apply database migrations
 be-migrate:
     cd backend && uv run python manage.py migrate
+
+# Sync periodic Celery Beat schedules from scheduled_tasks.py into the DB
+be-sync-tasks *args:
+    cd backend && uv run python manage.py sync_scheduled_tasks {{ args }}
 
 # Create new migrations after model changes
 be-makemigrations app="":

@@ -19,6 +19,11 @@ services:
       - "5435:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser -d appdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   backend:
     build: ./backend
@@ -42,7 +47,7 @@ services:
       - ./backend:/app
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
     env_file:
@@ -56,12 +61,20 @@ services:
 
   celery_beat:
     build: ./backend
-    command: celery -A core beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    # Beat owns schedule setup: wait for the DB, apply migrations (creating the
+    # django-celery-beat / results tables), sync PeriodicTask rows from
+    # scheduled_tasks.py, then start the scheduler.
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py sync_scheduled_tasks &&
+             celery -A core beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
     volumes:
       - ./backend:/app
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - path: ./backend/.env
         required: false

@@ -1,3 +1,5 @@
+import json
+
 from celery import current_app
 from django_celery_beat.models import PeriodicTask
 from django_celery_results.models import TaskResult
@@ -33,12 +35,12 @@ class PeriodicTaskToggleView(generics.UpdateAPIView):
 class PeriodicTaskTriggerView(APIView):
     """POST /api/tasks/schedules/<pk>/trigger/ — fire a task immediately."""
 
-    def post(self, request: Request, pk: int) -> Response:
+    def post(self, request: Request, pk: int) -> Response:  # noqa: ARG002
         task = generics.get_object_or_404(PeriodicTask, pk=pk)
         async_result = current_app.send_task(
             task.task,
-            args=task.args or [],
-            kwargs=task.kwargs or {},
+            args=json.loads(task.args) if task.args else [],
+            kwargs=json.loads(task.kwargs) if task.kwargs else {},
         )
         return Response({"task_id": async_result.id}, status=202)
 

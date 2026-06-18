@@ -17,8 +17,9 @@ The mechanism is **Celery + django-celery-beat's `DatabaseScheduler`**: schedule
 ```
 backend/   Django REST API + Celery (Python 3.13, uv, PostgreSQL, Redis)
   core/    settings/ (base|dev|prod|test), urls.py, celery.py
-  apps/    accounts/ (CustomUser, JWT), pages/ (health + /api/tasks/ demo)
-           notifications/ — PLANNED (see the design spec)
+  apps/    accounts/ (CustomUser, JWT), pages/ (health + ad-hoc task demo)
+           notifications/ (Event model + generate_events / fire_events tasks)
+           tasks/ (SCHEDULED_TASKS source of truth + sync_scheduled_tasks + schedule/result API)
 frontend/  React 19 SPA (Vite 8, TS, TanStack Router/Query, Tailwind v4, shadcn/base-ui, Zustand)
 docs/      standards/ guides/ plans/ explanations/  — single source of truth, keep in sync
 justfile   task runner — `just --list`
@@ -32,6 +33,7 @@ justfile   task runner — `just --list`
 | Backend dev server (local) | `just be-dev` |
 | Backend tests / coverage | `just be-test` / `just be-test-cov` |
 | Make / apply migrations | `just be-makemigrations` / `just be-migrate` |
+| Sync periodic schedules from code | `just be-sync-tasks` (see [docs/guides/background-tasks.md](docs/guides/background-tasks.md)) |
 | Backend lint / format | `just be-lint` / `just be-fmt` |
 | Backend type check | `cd backend && uv run mypy .` |
 | Scaffold a Django app | `just be-startapp <name>` |
@@ -50,6 +52,7 @@ The detailed, authoritative conventions live in [.github/copilot-instructions.md
 - Models use UUID primary keys. Always `makemigrations` after model changes; **never** edit/delete existing migrations.
 - Config via `django-environ` / `.env` — never hardcode secrets. Settings are split (`base`/`dev`/`prod`/`test`).
 - Celery tasks go in each app's `tasks.py` (auto-discovered by `core/celery.py`). Schedules are DB rows (`django-celery-beat`), **not** a static `beat_schedule` dict.
+- Periodic schedules are declared in code in `apps/tasks/scheduled_tasks.py` (`SCHEDULED_TASKS`) and applied to the DB with `just be-sync-tasks` (the `sync_scheduled_tasks` command) — **never** hand-edit `PeriodicTask` rows for managed tasks. `be-dev` runs the sync automatically.
 
 **Frontend**
 - Functional components only. Server state → TanStack Query; UI/global state → Zustand (never server data); routing → TanStack Router (file-based in `src/routes/`).

@@ -68,6 +68,12 @@ AUTH_USER_MODEL = "accounts.CustomUser"
 
 **API docs:** `drf-spectacular` is installed. Schema at `/api/schema/`, Swagger UI at `/api/schema/swagger-ui/`.
 
+**Background tasks (Celery):**
+- Celery app in `core/celery.py`; tasks go in each app's `tasks.py` (auto-discovered).
+- Periodic schedules use `django-celery-beat`'s `DatabaseScheduler` — schedules are DB rows, **never** a static `beat_schedule` dict, so they are mutable at runtime.
+- Declare periodic tasks in code in `apps/tasks/scheduled_tasks.py` (`SCHEDULED_TASKS`, one dict per task, `interval` or `crontab`). Apply them with `just be-sync-tasks` (the `sync_scheduled_tasks` command): it upserts `PeriodicTask` rows keyed on `name` and prunes any not in the list. Never hand-edit managed `PeriodicTask` rows.
+- Inspect/control schedules at runtime via `/api/tasks/schedules/` and `/api/tasks/results/`. See [docs/guides/background-tasks.md](../docs/guides/background-tasks.md).
+
 ---
 
 ## Frontend (`frontend/`)
@@ -234,7 +240,9 @@ Key commands:
 │   │   │   ├── views.py
 │   │   │   ├── urls.py
 │   │   │   └── migrations/
-│   │   └── pages/             # Health check and static page endpoints
+│   │   ├── pages/             # Health check, ad-hoc task trigger/status demo
+│   │   ├── notifications/     # Event model + generate_events / fire_events tasks
+│   │   └── tasks/             # SCHEDULED_TASKS + sync_scheduled_tasks + schedule/result API (no models)
 │   ├── conftest.py            # Root pytest fixtures
 │   ├── manage.py
 │   ├── pyproject.toml         # Dependencies (uv), pytest, ruff config

@@ -41,6 +41,34 @@ class TestCeleryConfig:
 
         assert getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False) is True
 
+    def test_result_backend_is_django_db(self):
+        # Results persist to Postgres (queryable, survive a Redis restart).
+        # Guards against the Redis result-backend override creeping back into
+        # docker-compose — base.py is the single source of truth.
+        assert celery_app.conf.result_backend == "django-db"
+        assert celery_app.conf.result_extended is True
+
+    def test_beat_scheduler_is_database_scheduler(self):
+        # Dynamic, user-changeable schedules live in the DB and beat re-reads
+        # them at runtime — no static beat_schedule, no process restart.
+        assert (
+            celery_app.conf.beat_scheduler
+            == "django_celery_beat.schedulers:DatabaseScheduler"
+        )
+
+    def test_reliability_settings(self):
+        # acks_late + prefetch=1 means a task survives a worker crash and long
+        # tasks don't block short ones on the same worker.
+        assert celery_app.conf.task_acks_late is True
+        assert celery_app.conf.worker_prefetch_multiplier == 1
+        assert celery_app.conf.task_track_started is True
+
+    def test_task_time_limits(self):
+        # Soft limit fires SoftTimeLimitExceeded before the hard kill.
+        assert celery_app.conf.task_soft_time_limit == 300
+        assert celery_app.conf.task_time_limit == 360
+        assert celery_app.conf.task_soft_time_limit < celery_app.conf.task_time_limit
+
 
 class TestAddTask:
     """Celery task unit tests — run eagerly via CELERY_TASK_ALWAYS_EAGER."""
@@ -101,14 +129,13 @@ class TestProcessDataTask:
         from celery.exceptions import Retry
 
         import apps.pages.tasks as tasks_module
+        from apps.pages.tasks import process_data
 
         mocker.patch.object(
             tasks_module.time, "sleep", side_effect=RuntimeError("boom")
         )
         # In eager mode, self.retry() raises celery.exceptions.Retry
         with pytest.raises(Retry):
-            from apps.pages.tasks import process_data
-
             process_data.apply(args=[{"fail": True}], throw=True)
 
 
