@@ -64,6 +64,24 @@ describe('EventsChart', () => {
     expect(fired.data).toHaveLength(1)
   })
 
+  it('places scheduled (armed) events in their own series', async () => {
+    render(
+      <EventsChart
+        events={[
+          makeEvent({ id: '1', status: 'scheduled' }),
+          makeEvent({ id: '2', status: 'scheduled' }),
+          makeEvent({ id: '3', status: 'pending' }),
+        ]}
+      />,
+    )
+
+    await waitFor(() => expect(capturedOptions.length).toBeGreaterThan(0))
+
+    const series = lastSeries()
+    expect(series.find((s) => s.name === 'scheduled')!.data).toHaveLength(2)
+    expect(series.find((s) => s.name === 'pending')!.data).toHaveLength(1)
+  })
+
   it('produces empty series when there are no events', async () => {
     render(<EventsChart events={[]} />)
 

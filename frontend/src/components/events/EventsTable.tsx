@@ -6,14 +6,18 @@ interface EventsTableProps {
   events: NotificationEvent[];
 }
 
+const STATUS_STYLES: Record<NotificationEvent["status"], string> = {
+  fired: "bg-green-500/15 text-green-600 dark:text-green-400",
+  scheduled: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+  pending: "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+};
+
 function StatusBadge({ status }: { status: NotificationEvent["status"] }) {
   return (
     <span
       className={cn(
         "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium",
-        status === "fired"
-          ? "bg-green-500/15 text-green-600 dark:text-green-400"
-          : "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+        STATUS_STYLES[status],
       )}
     >
       {status}

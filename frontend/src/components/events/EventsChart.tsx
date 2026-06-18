@@ -10,12 +10,18 @@ interface EventsChartProps {
   events: NotificationEvent[];
 }
 
-const STATUS_ROWS = ["fired", "pending"] as const;
+const STATUS_ROWS = ["fired", "scheduled", "pending"] as const;
+
+const STATUS_COLORS: Record<(typeof STATUS_ROWS)[number], string> = {
+  fired: "#22c55e",
+  scheduled: "#3b82f6",
+  pending: "#f59e0b",
+};
 
 /**
  * Timeline scatter of events: x-axis is the scheduled time, points are split
- * into "pending" and "fired" rows so the distribution of upcoming vs. already
- * fired events over time is visible at a glance.
+ * into "pending" (not yet armed), "scheduled" (armed, awaiting its eta), and
+ * "fired" rows so the lifecycle distribution over time is visible at a glance.
  */
 function buildOption(events: NotificationEvent[], nowMs: number): EChartsOption {
   const toPoint = (e: NotificationEvent) => ({
@@ -48,7 +54,7 @@ function buildOption(events: NotificationEvent[], nowMs: number): EChartsOption 
         );
       },
     },
-    legend: { data: ["pending", "fired"], top: 8 },
+    legend: { data: [...STATUS_ROWS], top: 8 },
     xAxis: {
       type: "time",
       name: "Scheduled time",
@@ -62,15 +68,15 @@ function buildOption(events: NotificationEvent[], nowMs: number): EChartsOption 
       type: "category",
       data: [...STATUS_ROWS],
     },
-    series: [
-      {
-        name: "pending",
-        type: "scatter",
-        symbolSize: 14,
-        itemStyle: { color: "#f59e0b" },
-        // A vertical "now" line: events left of it are overdue/fired, those to
-        // the right are still upcoming. Attached to one series only so it draws
-        // once.
+    series: STATUS_ROWS.map((status, i) => ({
+      name: status,
+      type: "scatter",
+      symbolSize: 14,
+      itemStyle: { color: STATUS_COLORS[status] },
+      // A vertical "now" line: events left of it are overdue/fired, those to the
+      // right are still upcoming. Attached to the first series only so it draws
+      // once.
+      ...(i === 0 && {
         markLine: {
           silent: true,
           symbol: "none",
@@ -78,18 +84,9 @@ function buildOption(events: NotificationEvent[], nowMs: number): EChartsOption 
           label: { formatter: "now", position: "end", color: "#64748b" },
           data: [{ xAxis: nowMs }],
         },
-        data: events
-          .filter((e) => e.status === "pending")
-          .map(toPoint),
-      },
-      {
-        name: "fired",
-        type: "scatter",
-        symbolSize: 14,
-        itemStyle: { color: "#22c55e" },
-        data: events.filter((e) => e.status === "fired").map(toPoint),
-      },
-    ],
+      }),
+      data: events.filter((e) => e.status === status).map(toPoint),
+    })),
   };
 }
 

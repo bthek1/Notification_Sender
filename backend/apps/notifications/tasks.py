@@ -2,7 +2,12 @@ import logging
 
 from celery import shared_task
 
-from .services import fire_due_events, generate_future_events
+from .services import (
+    fire_due_events,
+    fire_single_event,
+    generate_future_events,
+    schedule_upcoming_events,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -23,12 +28,33 @@ def generate_events(count: int = 5, within_minutes: int = 20) -> list[str]:
 
 
 @shared_task
-def fire_events() -> int:
-    """Fire all pending events whose scheduled_time has passed.
+def schedule_upcoming_events_task(window_minutes: int = 10) -> int:
+    """Periodic scheduler: arm a one-shot fire task for each event entering the
+    next ``window_minutes``-minute window. Returns the number armed this pass.
+    """
+    armed = schedule_upcoming_events(window_minutes=window_minutes)
+    if armed:
+        logger.info("schedule_upcoming_events armed %d event(s)", armed)
+    return armed
 
-    Intended to be run periodically by Celery beat. Returns the count fired.
+
+@shared_task
+def fire_event(event_id: str) -> str:
+    """Fire a single event at its exact scheduled time. Armed by the scheduler
+    with an ``eta``; idempotent and re-time-aware (see ``fire_single_event``).
+    """
+    result = fire_single_event(event_id)
+    if result == "fired":
+        logger.info("fire_event fired event %s", event_id)
+    return result
+
+
+@shared_task
+def fire_events() -> int:
+    """Sweeper: fire all pending events already past due. Low-frequency
+    durability backstop for the exact-time path. Returns the count fired.
     """
     fired = fire_due_events()
     if fired:
-        logger.info("fire_events fired %d due event(s)", fired)
+        logger.info("fire_events (sweeper) fired %d due event(s)", fired)
     return fired

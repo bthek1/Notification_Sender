@@ -1,4 +1,4 @@
-export type EventStatus = "pending" | "fired";
+export type EventStatus = "pending" | "scheduled" | "fired";
 
 export interface NotificationEvent {
   id: string;

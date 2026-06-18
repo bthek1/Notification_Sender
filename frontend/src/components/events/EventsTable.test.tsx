@@ -42,6 +42,11 @@ describe("EventsTable", () => {
     expect(screen.getByText("fired")).toBeInTheDocument();
   });
 
+  it("renders the scheduled (armed) status badge", () => {
+    render(<EventsTable events={[makeEvent({ status: "scheduled" })]} />);
+    expect(screen.getByText("scheduled")).toBeInTheDocument();
+  });
+
   it("shows a dash in the fired and delay columns when not yet fired", () => {
     render(<EventsTable events={[makeEvent({ fired_at: null })]} />);
     // Both the Fired and Delay columns render a placeholder dash.

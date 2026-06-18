@@ -9,4 +9,10 @@ class EventAdmin(admin.ModelAdmin):
     list_filter = ("status",)
     search_fields = ("title", "message")
     ordering = ("scheduled_time",)
-    readonly_fields = ("id", "created_at", "updated_at", "fired_at")
+    readonly_fields = (
+        "id",
+        "created_at",
+        "updated_at",
+        "fired_at",
+        "dispatch_task_id",
+    )
